@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "operations": [
+    {
+      "op": "create_table",
+      "table": "employees",
+      "columns": [
+        {"name": "display_name", "type": "text", "nullable": false, "max_length": 120},
+        {"name": "employee_no", "type": "text", "nullable": false, "max_length": 32, "json_schema": {"type": "string", "pattern": "^[A-Za-z0-9_-]{1,32}$"}},
+        {"name": "email", "type": "text", "nullable": true, "max_length": 254, "format": "email"},
+        {"name": "phone", "type": "text", "nullable": true, "max_length": 24, "format": "phone"},
+        {"name": "job_title", "type": "text", "nullable": false, "default": "", "max_length": 80},
+        {"name": "department", "type": "text", "nullable": false, "default": "", "max_length": 80},
+        {"name": "employment_type", "type": "text", "nullable": false, "default": "full_time", "enum": ["full_time", "part_time", "contract", "intern"]},
+        {"name": "join_date", "type": "text", "nullable": false, "max_length": 10, "json_schema": {"type": "string", "pattern": "^[0-9-]{10}$"}},
+        {"name": "leave_date", "type": "text", "nullable": true, "max_length": 10, "json_schema": {"type": "string", "pattern": "^[0-9-]{10}$"}},
+        {"name": "manager_id", "type": "text", "nullable": true, "max_length": 128, "json_schema": {"type": "string", "pattern": "^[A-Za-z0-9_-]{1,128}$"}},
+        {"name": "status", "type": "text", "nullable": false, "default": "active", "enum": ["active", "on_leave", "left"]},
+        {"name": "member_id", "type": "text", "nullable": true, "max_length": 128, "json_schema": {"type": "string", "pattern": "^[A-Za-z0-9_-]{1,128}$"}}
+      ]
+    },
+    {
+      "op": "create_index",
+      "table": "employees",
+      "name": "employees_employee_no",
+      "columns": ["employee_no"],
+      "unique": true
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "contract": "app-chat/v1",
+  "app": "hr",
+  "contexts": [
+    {
+      "id": "people",
+      "label": "People",
+      "prompts": ["Find an employee by name", "Add a new employee", "List employees who have left"],
+      "record": {
+        "label": "Employee",
+        "prompts": ["Summarise this employee", "Change this employee's job title", "Mark this employee as left"]
+      }
+    }
+  ],
+  "presentation": { "showContext": true }
+}

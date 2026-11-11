@@ -1,0 +1,57 @@
+{
+  "contract": "app-screens/v2",
+  "app": "hr",
+  "entry": "client.js",
+  "startup": [
+    "runtime.js",
+    "client.js"
+  ],
+  "assets": [
+    {
+      "name": "runtime.js",
+      "media_type": "text/javascript",
+      "size": 191020,
+      "sha256": "sha256:a379c5946cf3e42f9859e2ea3a9b15bc3a2d4bcf5009b0cbe1ae6608ebe0ec9c"
+    },
+    {
+      "name": "client.js",
+      "media_type": "text/javascript",
+      "size": 71504,
+      "sha256": "sha256:25d8c7198356e6e77e72318423a2862bcc42378fc3db89c1da66e0678de1392d"
+    },
+    {
+      "name": "hr.css",
+      "media_type": "text/css",
+      "size": 26193,
+      "sha256": "sha256:c36184f3c9a886523115e86e75b715b0c544130c534a63efb0f0aa676663a33d"
+    }
+  ],
+  "provenance": {
+    "source_digest": "sha256:926a1209faaa84fb00d0cd9c66e4f98db62f6b4eb5c325f97b3392819a5b7b00",
+    "sdk_digest": "sha256:fd65c974511e63b3996e9fa7e438fb4e39df5f508d11636116ef150fcc123e35",
+    "toolchain_digest": "sha256:e21cfc8222db408abe6ba5a482520639d9cf4b96481c19aff4b4246af8a65e42"
+  },
+  "host_contract": "screen-records.v1",
+  "may": [
+    "records.call",
+    "records.slot"
+  ],
+  "tools": {},
+  "operations": [
+    "records.list",
+    "records.show",
+    "records.create",
+    "records.update",
+    "screen.route.patch"
+  ],
+  "navigation": {
+    "section_query": "hr",
+    "default_section": "people",
+    "sections": [
+      {
+        "id": "people",
+        "label": "People"
+      }
+    ]
+  }
+}
