@@ -1045,9 +1045,12 @@ def _storage_column(column: object, where: str, table: str) -> dict:
                 f"{where}: column '{name}' format is email, phone or tag on a text column"
             )
     if "json_schema" in column:
-        if ctype != "json":
+        # The host's app-storage contract (packages/contracts/src/app-storage.ts) admits a
+        # json_schema on any column type; HR bounds its text dates with a pattern. This
+        # offline mirror was stricter than the host and is widened to match it.
+        if ctype not in ("json", "text"):
             raise PackageError(
-                f"{where}: column '{name}' json_schema applies to a json column"
+                f"{where}: column '{name}' json_schema applies to a json or text column"
             )
         _storage_json_schema(column["json_schema"], where, f"column '{name}' json_schema")
     return column

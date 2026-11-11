@@ -58,8 +58,8 @@
   background: var(--color-ink-850);
 }
 .hr-table-wrap:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
-.hr-table { width: 100%; border-collapse: collapse; font-size: var(--text-table); }
-.hr-table th, .hr-table td { text-align: left; padding: 0.55rem 0.75rem; border-bottom: 1px solid var(--color-ink-700); vertical-align: top; overflow-wrap: anywhere; }
+.hr-table { width: 100%; min-width: 42rem; border-collapse: collapse; font-size: var(--text-table); }
+.hr-table th, .hr-table td { text-align: left; padding: 0.55rem 0.75rem; border-bottom: 1px solid var(--color-ink-700); vertical-align: top; }
 .hr-table thead th { font-size: var(--text-micro); text-transform: uppercase; letter-spacing: 0.06em; color: var(--color-ink-500); }
 .hr-table tbody tr:last-child td { border-bottom: 0; }
 .hr-nowrap { white-space: nowrap; }

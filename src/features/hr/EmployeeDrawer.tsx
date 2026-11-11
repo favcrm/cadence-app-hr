@@ -37,7 +37,7 @@ export default function EmployeeDrawer({ scope, recordId, canWrite, onClose }: {
     void free
       .then(() => hostActions.update(scope, recordId, record.revision, patch))
       .then((next) => { state.store.write(() => next); setEditing(false); })
-      .catch((e: unknown) => { const r = writeProblem(e, t); setProblem(r.problem); setStale(r.kind === "stale"); })
+      .catch((e: unknown) => { const r = writeProblem(e, "update", t); setProblem(r.problem); setStale(r.kind === "stale"); })
       .finally(() => setPending(false));
   };
 

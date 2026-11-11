@@ -8,7 +8,7 @@
 #
 # The archive filename is derived from `build`'s JSON output
 # (`archive`/`sidecar`/`app`/`version`), never a hardcoded
-# `crm-0.1.0`, so a manifest version bump does not break these steps.
+# `hr-0.1.0`, so a manifest version bump does not break these steps.
 
 name: package
 
@@ -142,7 +142,7 @@ jobs:
       - name: Screen typecheck
         run: pnpm run typecheck
 
-      - name: Build real CRM screen (release provenance required)
+      - name: Build real HR screen (release provenance required)
         run: pnpm run build
 
       - name: Verify screen and SDK authority boundary

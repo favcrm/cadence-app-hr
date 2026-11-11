@@ -1,5 +1,5 @@
 import { ErrorNotice, Loading, Notice } from "@cadence/screen-ui";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { patchRoute } from "../../bridge/route";
 import { scopeError, useScope } from "../../bridge/scope";
 import EmployeeDrawer from "./EmployeeDrawer";
@@ -15,7 +15,10 @@ const HOST_PUSH_TIMEOUT_MS = 15000;
 
 export default function HrScreen() {
   const snapshot = useScope();
-  const locale = snapshot?.presentationLocale ?? "en";
+  // Keep the last language through a lost connection, so the notice reads in the owner's language.
+  const last = useRef<"en" | "zh-TW">("en");
+  if (snapshot) last.current = snapshot.presentationLocale;
+  const locale = last.current;
   return <HrLocaleProvider locale={locale}><Body /></HrLocaleProvider>;
 }
 

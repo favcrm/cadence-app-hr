@@ -248,7 +248,7 @@ if (
 // A Native content refusal can also mean a blocked credential. Its stage code
 // is not a safety receipt. Scan every exact uploaded member independently,
 // before either diagnostics or OIDC, with no inherited operator allowlist.
-const scannerState = mkdtempSync(join(tmpdir(), "crm-publish-secrets-"));
+const scannerState = mkdtempSync(join(tmpdir(), "hr-publish-secrets-"));
 let scanFailure = null;
 try {
   for (const path of paths) {

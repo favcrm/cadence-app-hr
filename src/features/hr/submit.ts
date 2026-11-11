@@ -1,7 +1,7 @@
 import { ApiError } from "@cadence/screen-ui";
 import { classifyWriteFailure, findDuplicate, FormError, type WriteFailure } from "../../domain/people";
 import { hostActions, type HostScope } from "./hostActions";
-import { hostErrorText, SESSION_EXPIRED_TEXT } from "./hostErrors";
+import { SESSION_EXPIRED_TEXT } from "./hostErrors";
 import type { FieldProblem } from "./EmployeeForm";
 
 export const DUPLICATE_TEXT = "That employee number is already used by another employee. Pick a different number or open the existing employee.";
@@ -18,11 +18,12 @@ export async function assertEmployeeNoFree(scope: HostScope, employeeNo: string,
 }
 
 /** One plain-words message for a failed write, plus whether a reload should be offered. */
-export function writeProblem(error: unknown, t: (s: string) => string): { problem: FieldProblem; kind: WriteFailure | "form" } {
+export function writeProblem(error: unknown, operation: "create" | "update", t: (s: string) => string): { problem: FieldProblem; kind: WriteFailure | "form" } {
   if (error instanceof FormError) return { problem: { field: error.field, message: t(error.message) }, kind: "form" };
-  const kind = classifyWriteFailure(error instanceof ApiError ? error : null);
+  const kind = classifyWriteFailure(error instanceof ApiError ? error : null, operation);
   if (kind === "duplicate") return { problem: { field: "employeeNo", message: t(DUPLICATE_TEXT) }, kind };
   if (kind === "session") return { problem: { field: null, message: t(SESSION_EXPIRED_TEXT) }, kind };
-  if (kind === "refused") return { problem: { field: null, message: hostErrorText(error, t("The change was refused — check the fields and try again.")) }, kind };
+  // The board's own refusal text is generic ("Inspect fresh status..."), so say what the owner can do.
+  if (kind === "refused") return { problem: { field: null, message: t("The change was refused — check the fields and try again.") }, kind };
   return { problem: { field: null, message: t(TEXT[kind]) }, kind };
 }

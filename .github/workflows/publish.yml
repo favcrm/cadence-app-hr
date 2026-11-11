@@ -1,8 +1,8 @@
-# AOS-376 / AOS-390 / AOS-384 / AOS-431: publish one CRM release as a verified
+# AOS-376 / AOS-390 / AOS-384 / AOS-431: publish one HR release as a verified
 # catalogue listing.
 #
 # Tag-driven and OIDC-only. The catalogue binds this repository, this workflow
-# file and `refs/tags/v<version>` to the CRM app id, re-verifies the uploaded
+# file and `refs/tags/v<version>` to the HR app id, re-verifies the uploaded
 # bytes/digest/identity, and lists that exact version as `published`
 # immediately. There is no draft review or promotion step. Listing is not
 # installation: a hosted tenant installs exactly this digest through its own
@@ -96,5 +96,5 @@ jobs:
         env:
           APP_CHECK_JSON: /tmp/app-check.json
           APP_DIR: app
-          EXPECTED_REPOSITORY: favcrm/cadence-app-crm
+          EXPECTED_REPOSITORY: favcrm/cadence-app-hr
         run: node .github/scripts/publish.mjs

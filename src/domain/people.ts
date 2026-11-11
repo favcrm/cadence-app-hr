@@ -100,13 +100,19 @@ export function findDuplicate(rows: readonly { id: string; profile: unknown }[],
 }
 
 export type WriteFailure = "stale" | "duplicate" | "store_unavailable" | "timeout" | "session" | "refused";
-/** Classify a refusal by its code and status, never by its wording. */
-export function classifyWriteFailure(error: { status?: number; code?: string } | null | undefined): WriteFailure {
+/**
+ * Classify a refused write by code and status, never by wording. The hosted board narrows the
+ * host's error to one of unauthorized, forbidden, not_found, conflict, unavailable or failed by
+ * HTTP status before the frame sees it, so a 409 is `conflict` and a store error is `unavailable`.
+ * On update a conflict is a stale revision; on create it can only be an id that already holds a record.
+ */
+export function classifyWriteFailure(error: { status?: number; code?: string } | null | undefined, operation: "create" | "update"): WriteFailure {
   const code = error?.code, status = error?.status;
-  if (code === "revision_conflict" || code === "stale_revision") return "stale";
-  if (code === "record_exists" || code === "duplicate" || code === "unique_violation") return "duplicate";
+  if (code === "stale_revision" || code === "revision_conflict") return "stale";
+  if (code === "record_exists" || code === "duplicate") return "duplicate";
+  if (status === 409 || code === "conflict") return operation === "update" ? "stale" : "duplicate";
   if (status === 401) return "session";
   if (status === 504) return "timeout";
-  if (code === "storage_unavailable" || status === 503) return "store_unavailable";
+  if (code === "unavailable" || code === "storage_unavailable" || status === 503) return "store_unavailable";
   return "refused";
 }

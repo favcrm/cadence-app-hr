@@ -25,7 +25,7 @@ export default function EmployeeNew({ scope, canWrite, onCreated, onCancel }: {
     void assertEmployeeNoFree(scope, profile.employee_no!, null)
       .then(() => hostActions.create(scope, recordId, profile))
       .then((record) => onCreated(record.id))
-      .catch((error: unknown) => setProblem(writeProblem(error, t).problem))
+      .catch((error: unknown) => setProblem(writeProblem(error, "create", t).problem))
       .finally(() => setPending(false));
   };
   return (
