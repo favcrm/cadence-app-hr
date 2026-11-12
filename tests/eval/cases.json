@@ -1,5 +1,5 @@
 {
-  "note": "Synthetic evaluation cases: invented people, merchants and CVs. Deterministic checks are run by tests/eval/grade.mjs over recorded outputs (hand-written golden outputs and their mutations); no model is run. An answer case lists every figure the answer may state; a decline case lists the policy substance it must not state. Judged checks are yes/no questions for a reviewer and are not run here.",
+  "note": "Synthetic evaluation cases: invented people, merchants and CVs. Deterministic checks are run by tests/eval/grade.mjs over recorded outputs (hand-written golden outputs and their mutations); no model is run. An answer case lists the figures the answer must state; any other figure it states must appear in the cited policy's body. A decline case lists the policy substance it must not state; a term the question itself uses may be repeated only in the clause that says no current policy covers it. Judged checks are yes/no questions for a reviewer and are not run here.",
   "policy_questions": [
     {"id": "pq01", "question": "How many days of annual leave do full-time staff get?", "expect": {"kind": "answer", "title": "Annual leave (sample)", "effective_from": "2026-01-01", "must_include": ["annual leave"], "figures": ["15"]}},
     {"id": "pq02", "question": "Can I claim a meal without a receipt?", "expect": {"kind": "answer", "title": "Meal claims (sample)", "effective_from": "2026-02-01", "must_include": ["receipt"], "figures": []}},
@@ -10,7 +10,7 @@
     {"id": "pq07", "question": "Are taxi fares reimbursed in full?", "expect": {"kind": "decline", "not_cite": ["Old travel rule (sample)"], "forbid": ["in full", "fully reimbursed", "full reimbursement"], "reason": "the only policy on this is retired"}},
     {"id": "pq08", "question": "Can I work from home on Fridays?", "expect": {"kind": "decline", "not_cite": ["Remote work (sample)"], "forbid": ["friday"], "reason": "the only policy on this is a draft"}},
     {"id": "pq09", "question": "How much parental leave do I get?", "expect": {"kind": "decline", "not_cite": ["Parental leave (sample)"], "forbid": ["twelve", "12 week", "12-week"], "reason": "the policy takes effect on 2026-09-01, after today"}},
-    {"id": "pq10", "question": "What is the dress code?", "expect": {"kind": "decline", "not_cite": [], "forbid": ["smart casual", "business casual", "casual", "formal", "jeans"], "reason": "no policy covers it"}}
+    {"id": "pq10", "question": "What is the dress code?", "expect": {"kind": "decline", "not_cite": [], "forbid": ["smart casual", "business casual", "jeans"], "reason": "no policy covers it"}}
   ],
   "leave_requests": [
     {"id": "lr01", "message": "Please book annual leave for E-001 from 2026-07-06 to 2026-07-07.", "expect": {"kind": "stage", "employee_no": "E-001", "profile": {"leave_type": "ANNUAL", "start_date": "2026-07-06", "end_date": "2026-07-07", "half_days": 4}}},

@@ -3,7 +3,7 @@
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { gradeClaim, gradeLeave, gradePolicyAnswer, gradeScreening, inForce } from "./grade.mjs";
+import { figuresOf, gradeClaim, gradeLeave, gradePolicyAnswer, gradeScreening, inForce } from "./grade.mjs";
 import { answers, claims, employees, leaves, screenings } from "./golden.mjs";
 
 const read = (p) => JSON.parse(readFileSync(fileURLToPath(new URL(p, import.meta.url)), "utf8"));
@@ -12,6 +12,10 @@ const { policies, today } = read("./policies.json");
 const tables = read("../../app/app-storage.json").tables;
 const leaveSchema = tables.leave_requests.write_schema, claimSchema = tables.claims.write_schema;
 const clone = (v) => structuredClone(v);
+const policyCase = (id) => cases.policy_questions.find((c) => c.id === id);
+const graded = (id, text) => gradePolicyAnswer(policyCase(id), text, policies, today);
+/** The exact citation line for an answer case. */
+const cite = (id) => `Source: ${policyCase(id).expect.title} (effective ${policyCase(id).expect.effective_from})`;
 
 test("the set has the planned size, and every case has a golden output", () => {
   expect(cases.policy_questions.length).toBe(10);
@@ -82,6 +86,80 @@ test("a decline that states the policy's substance fails, and keeps its decline 
   expect(grade("pq09", "No current policy in force covers it yet; it will be 12 weeks.")).toContain("a decline states the substance '12 week'");
   expect(grade("pq10", "No current policy covers the dress code, so smart casual is the usual standard.")).toContain("a decline states the substance 'smart casual'");
   expect(grade("pq10", "Wear what you like.")).toContain("does not decline");
+});
+
+// Answers a second review ran through the earlier grader. The correct ones cite the policy exactly and state only
+// what its body says, so each must pass; each wrong one must fail with the check named.
+test("a second figure from the cited policy's body passes; the listed figures stay required", () => {
+  expect(graded("pq02", `No. A meal claim needs a receipt, and it is capped at 200 per day. ${cite("pq02")}`)).toEqual([]);
+  expect(graded("pq03", `A meal claim is capped at 200 per day and must be submitted within 30 days of the receipt date. ${cite("pq03")}`)).toEqual([]);
+  expect(graded("pq03", `A meal claim must be submitted within 30 days of the receipt date. ${cite("pq03")}`)).toContain("answer does not state the figure '200'");
+  // Only the cited policy's body counts: the meal cap is not an annual-leave figure.
+  expect(graded("pq01", `Full-time staff have 15 days of annual leave per leave year and may claim 200 per day for meals. ${cite("pq01")}`)).toContain("answer states '200', which is not the policy's figure");
+});
+
+test("figures are compared as values: number words, am/pm times, Arabic digits for Chinese numerals", () => {
+  expect(graded("pq01", `Each full-time employee has fifteen days of annual leave per leave year. ${cite("pq01")}`)).toEqual([]);
+  expect(graded("pq03", `A meal claim is capped at two hundred per day. ${cite("pq03")}`)).toEqual([]);
+  expect(graded("pq05", `Core hours are 10am to 4pm. ${cite("pq05")}`)).toEqual([]);
+  expect(graded("pq06", `全職員工每年有15日年假。 ${cite("pq06")}`)).toEqual([]);
+  expect(graded("pq06", `全職員工每年有拾伍日年假。 ${cite("pq06")}`)).toEqual([]);
+  // A wrong value fails in any spelling.
+  expect(graded("pq05", `Core hours are 10am to 5pm. ${cite("pq05")}`)).toContain("answer states '5pm', which is not the policy's figure");
+  expect(graded("pq01", `Each full-time employee has twenty days of annual leave per leave year. ${cite("pq01")}`)).toContain("answer states 'twenty', which is not the policy's figure");
+});
+
+test("'no one' is not a figure, and 'one' elsewhere still is", () => {
+  expect(graded("pq01", `Each full-time employee has 15 days of annual leave per leave year. Unused days lapse at year end, so no one carries them over. ${cite("pq01")}`)).toEqual([]);
+  expect(graded("pq01", `Full-time staff have 15 days of annual leave per leave year, and one more after probation. ${cite("pq01")}`)).toContain("answer states 'one', which is not the policy's figure");
+});
+
+test("a Chinese numeral is a figure before a unit or when no other Chinese character follows it", () => {
+  expect(graded("pq06", `一般全職員工每年有十五日年假。 ${cite("pq06")}`)).toEqual([]);
+  expect(graded("pq06", `全職員工每一年有十五日年假。 ${cite("pq06")}`)).toEqual([]);
+  expect(graded("pq06", `全職員工每年的年假為十五。 ${cite("pq06")}`)).toEqual([]);
+  expect(graded("pq06", `全職員工每年的年假為二十。 ${cite("pq06")}`)).toContain("answer states '二十', which is not the policy's figure");
+  expect(graded("pq06", `全職員工每年有十五日年假，資深員工有廿日。 ${cite("pq06")}`)).toContain("answer states '廿', which is not the policy's figure");
+  expect(graded("pq06", `全職員工每年有十五日年假，資深員工有貳拾日。 ${cite("pq06")}`)).toContain("answer states '貳拾', which is not the policy's figure");
+});
+
+test("only the exact citation is left out of the figure check", () => {
+  expect(graded("pq01", `Full-time staff get annual leave of 15 days. ${cite("pq01")}; in practice 20 days.`)).toContain("answer states '20', which is not the policy's figure");
+});
+
+test("figuresOf reads each figure's value", () => {
+  const values = (text) => figuresOf(text).map((f) => f.value);
+  expect(values("fifteen, two hundred, twenty-one, one hundred and five, a thousand")).toEqual(["15", "200", "21", "105", "1000"]);
+  expect(values("10am, 4 p.m., 4:30pm, 12pm, 12am, 9:00")).toEqual(["10:00", "16:00", "16:30", "12:00", "00:00", "09:00"]);
+  expect(values("十五日 廿五天 拾伍元 兩個月 一百零五元 三小時 二週")).toEqual(["15", "25", "15", "2", "105", "3", "2"]);
+  expect(values("一般 每一年 no one, No-one")).toEqual([]);
+  expect(values("1,205.00 on 2026-01-01")).toEqual(["1205", "2026-01-01"]);
+  // Every listed figure reads as exactly one figure, so it is compared by value.
+  for (const c of cases.policy_questions.filter((x) => x.expect.kind === "answer")) for (const f of c.expect.figures) expect([c.id, f, figuresOf(f).length]).toEqual([c.id, f, 1]);
+});
+
+test("a decline may repeat the question's words in the clause that says no current policy covers them", () => {
+  expect(graded("pq08", "No current policy covers working from home on Fridays. The only policy on this is a draft and is not in force.")).toEqual([]);
+  expect(graded("pq07", "No current policy covers whether taxi fares are reimbursed in full. The only policy on this is retired.")).toEqual([]);
+  // The same words in any other clause state the policy's substance.
+  expect(graded("pq08", "No current policy covers this. The draft lets staff work from home on Fridays.")).toContain("a decline states the substance 'friday'");
+  expect(graded("pq07", "No current policy covers taxi fares. The retired rule reimbursed them in full.")).toContain("a decline states the substance 'in full'");
+});
+
+test("pq10 forbids the dress code's substance, not 'formal' or a bare 'casual'", () => {
+  expect(graded("pq10", "No current policy covers the dress code; there is no formal rule.")).toEqual([]);
+  expect(graded("pq10", "No current policy covers the dress code, formally or informally.")).toEqual([]);
+  expect(graded("pq10", "No current policy covers the dress code, casual or otherwise.")).toEqual([]);
+  expect(graded("pq10", "No current policy covers the dress code; business casual is common.")).toContain("a decline states the substance 'business casual'");
+});
+
+// Known limit: a keyword grader cannot see a leak in other words. These wrong declines pass here; the judged checks
+// in cases.json are where a reviewer catches them (see the README).
+test("known limit: a leak in other words passes the keyword graders", () => {
+  expect(graded("pq07", "No current policy covers taxi fares; the retired rule paid 100% of them.")).toEqual([]);
+  expect(graded("pq09", "No current policy in force covers parental leave yet; from 2026-09-01 it gives 84 days.")).toEqual([]);
+  expect(graded("pq09", "No current policy in force covers parental leave yet; from 2026-09-01 it gives three months.")).toEqual([]);
+  expect(graded("pq10", "No current policy covers the dress code; a suit and tie is expected.")).toEqual([]);
 });
 
 test("leave mutations fail: approved status, medical text, wrong employee, float days, wrong dates", () => {
