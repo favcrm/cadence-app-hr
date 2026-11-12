@@ -38,6 +38,7 @@ test("each bad field is refused under its own field name", () => {
   expect(problem({ leaveDate: "2025-12-31" })?.[0]).toBe("leaveDate");
   expect(problem({ leaveDate: "soon" })?.[0]).toBe("leaveDate");
   expect(problem({ employmentType: "Zero Hours" })?.[0]).toBe("employmentType");
+  expect(problem({ employmentType: "grade_2" })).toBeNull();
   expect(problem({ status: "GONE" })?.[0]).toBe("status");
   expect(problem({ leaveDate: "2026-06-30", status: "left" })).toBeNull();
 });
@@ -87,8 +88,8 @@ test("write refusals are classified by what the frame can tell", () => {
   // The board narrows a host error to unauthorized/forbidden/not_found/conflict/unavailable/failed by HTTP status.
   expect(classifyWriteFailure({ status: 409, code: "stale_revision" }, "update")).toBe("stale");
   expect(classifyWriteFailure({ status: 409, code: "conflict" }, "update")).toBe("changed");
-  // A 409 on create is a full or not-ready store, never a "duplicate".
-  expect(classifyWriteFailure({ status: 409, code: "conflict" }, "create")).toBe("neutral");
+  // A 409 on create follows a clean pre-check: most often a retry of a create that landed, never a "duplicate".
+  expect(classifyWriteFailure({ status: 409, code: "conflict" }, "create")).toBe("maybe_saved");
   expect(classifyWriteFailure({ status: 503, code: "unavailable" }, "create")).toBe("store_unavailable");
   expect(classifyWriteFailure({ status: 504 }, "update")).toBe("timeout");
   expect(classifyWriteFailure({ status: 401, code: "unauthorized" }, "update")).toBe("session");

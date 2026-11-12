@@ -7,7 +7,7 @@ export const EMPLOYMENT_TYPES = ["full_time", "part_time", "contract", "intern"]
 export const EMPLOYEE_STATUSES = ["active", "on_leave", "left"] as const;
 export type EmploymentType = string;
 export type EmployeeStatus = string;
-const CODE = /^[a-z_]{1,32}$/;
+const CODE = /^[a-z0-9_]{1,32}$/;
 
 export const LIMITS = { displayName: 120, employeeNo: 32, email: 254, phone: 24, jobTitle: 80, department: 80 } as const;
 const EMPLOYEE_NO = /^[A-Z0-9_-]{1,32}$/;
@@ -109,16 +109,18 @@ export function findDuplicate(rows: readonly { id: string; profile: unknown }[],
  * - stale: the board kept the stale-revision code;
  * - changed: an update met a 409 (a revision conflict, or the store out of step) and the frame cannot tell which;
  * - store_unavailable: a 503, which is also how the host answers a unique-index violation today;
- * - rejected: a 400-class refusal, the only one that says "check the fields";
- * - neutral: anything else, including a 409 on create (a full or not-ready store), never a "duplicate".
+ * - maybe_saved: a 409 on create after a clean pre-check, most often a retry of a create that already landed;
+ * - rejected: status 400 with code `failed`. The board sends every status it does not name (400, 413, 500...) this
+ *   way, so the frame cannot tell a field refusal from a server failure and the text must be true for both;
+ * - neutral: anything else.
  * A duplicate is claimed only when the pre-check found the row.
  */
-export type WriteFailure = "stale" | "changed" | "store_unavailable" | "timeout" | "session" | "rejected" | "neutral";
+export type WriteFailure = "stale" | "changed" | "maybe_saved" | "store_unavailable" | "timeout" | "session" | "rejected" | "neutral";
 /** The hosted board narrows a host error by HTTP status to unauthorized, forbidden, not_found, conflict, unavailable or failed. */
 export function classifyWriteFailure(error: { status?: number; code?: string } | null | undefined, operation: "create" | "update"): WriteFailure {
   const code = error?.code, status = error?.status;
-  if (code === "stale_revision" || code === "revision_conflict") return operation === "update" ? "stale" : "neutral";
-  if (status === 409 || code === "conflict") return operation === "update" ? "changed" : "neutral";
+  if (code === "stale_revision" || code === "revision_conflict") return operation === "update" ? "stale" : "maybe_saved";
+  if (status === 409 || code === "conflict") return operation === "update" ? "changed" : "maybe_saved";
   if (status === 401) return "session";
   if (status === 504) return "timeout";
   if (code === "unavailable" || code === "storage_unavailable" || status === 503) return "store_unavailable";

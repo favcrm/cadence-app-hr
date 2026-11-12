@@ -10,7 +10,8 @@ const TEXT: Record<Exclude<WriteFailure, "session">, string> = {
   changed: "This employee could not be saved because the record changed or the store is out of step. Reload to see the latest version, then try again.",
   store_unavailable: "The employee store could not save this change. If the employee number may already exist, search for it first; otherwise try again.",
   timeout: "The workspace did not answer. Check the list before saving again, so the same person is not added twice.",
-  rejected: "The change was refused — check the fields and try again.",
+  maybe_saved: "This employee may already be saved. Check the list before trying again.",
+  rejected: "The change could not be saved. Check the fields, then try again. If it keeps happening, reload the page.",
   neutral: "The change could not be saved. Try again; if it keeps happening, reload the page.",
 };
 
@@ -30,4 +31,22 @@ export function writeProblem(error: unknown, operation: "create" | "update", t: 
   const kind = classifyWriteFailure(error instanceof ApiError ? error : null, operation);
   const message = kind === "session" ? SESSION_EXPIRED_TEXT : TEXT[kind];
   return { problem: { field: null, message: t(message) }, kind, reload: kind === "stale" || kind === "changed" };
+}
+
+/** Create: the pre-check ignores this form's own id, so a retry after a landed write is not called a duplicate. */
+export async function createEmployee(scope: HostScope, recordId: string, profile: Record<string, string | null>, actions: HostActions = hostActions) {
+  await assertEmployeeNoFree(scope, profile.employee_no!, recordId, actions);
+  return actions.create(scope, recordId, profile);
+}
+
+/** Update: the number is looked up only when it changes, and never against the row being edited. */
+export async function updateEmployee(scope: HostScope, record: { id: string; revision: number }, patch: Record<string, string | null>, actions: HostActions = hostActions) {
+  if ("employee_no" in patch) await assertEmployeeNoFree(scope, patch.employee_no!, record.id, actions);
+  return actions.update(scope, record.id, record.revision, patch);
+}
+
+/** What the drawer shows after a failed save, and whether it offers the reload button. */
+export function updateFailure(error: unknown, t: (s: string) => string): { problem: FieldProblem; stale: boolean } {
+  const r = writeProblem(error, "update", t);
+  return { problem: r.problem, stale: r.reload };
 }

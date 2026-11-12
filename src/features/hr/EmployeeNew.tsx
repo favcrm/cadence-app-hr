@@ -2,9 +2,9 @@ import { Button, Notice } from "@cadence/screen-ui";
 import { useEffect, useRef, useState } from "react";
 import { buildProfile, EMPTY_FORM, newEmployeeId, type EmployeeForm as Fields } from "../../domain/people";
 import EmployeeForm, { type FieldProblem } from "./EmployeeForm";
-import { hostActions, type HostScope } from "./hostActions";
+import type { HostScope } from "./hostActions";
 import { useLocale } from "./locale";
-import { assertEmployeeNoFree, writeProblem } from "./submit";
+import { createEmployee, writeProblem } from "./submit";
 
 const FORM_ID = "hr-employee-new";
 
@@ -23,8 +23,7 @@ export default function EmployeeNew({ scope, canWrite, onCreated, onCancel }: {
   const submit = (fields: Fields) => {
     const profile = buildProfile(fields);
     setPending(true); setProblem(null);
-    void assertEmployeeNoFree(scope, profile.employee_no!, recordId)
-      .then(() => hostActions.create(scope, recordId, profile))
+    void createEmployee(scope, recordId, profile)
       .then((record) => onCreated(record.id))
       .catch((error: unknown) => setProblem(writeProblem(error, "create", t).problem))
       .finally(() => setPending(false));

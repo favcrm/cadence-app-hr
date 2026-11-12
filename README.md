@@ -63,7 +63,7 @@ The host has no alter-column operation, so 0.1.0 fixes these:
 
 - `employee_no` is stored in capitals (`^[A-Z0-9_-]{1,32}$`). The screen upper-cases what is typed
   before it looks for a duplicate and before it writes, which makes the unique index ignore case.
-- `employment_type` and `status` are plain text (`^[a-z_]{1,32}$`) with their defaults, not host enums, so a
+- `employment_type` and `status` are plain text (`^[a-z0-9_]{1,32}$`) with their defaults, not host enums, so a
   later release can add a value. The screen owns the offered list and shows an unknown stored value as it is.
 - `join_date` may be empty. A record without one is stored and shown.
 - Dates are text with the pattern `^[0-9-]{10}$`, the strictest the host grammar allows. A write through the

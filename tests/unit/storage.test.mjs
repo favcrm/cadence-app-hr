@@ -117,7 +117,7 @@ test("the screen's enums and bounds are the stored ones", () => {
   // The closed lists live in the screen: a host enum can never gain a value after release.
   for (const name of ["employment_type", "status"]) {
     expect(byName[name].enum).toBeUndefined();
-    expect(byName[name].json_schema.pattern).toBe("^[a-z_]{1,32}$");
+    expect(byName[name].json_schema.pattern).toBe("^[a-z0-9_]{1,32}$");
   }
   expect(byName.employee_no.json_schema.pattern).toBe("^[A-Z0-9_-]{1,32}$");
   expect(byName.employment_type.default).toBe("full_time");

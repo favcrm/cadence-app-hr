@@ -3,10 +3,10 @@ import { useEffect, useState } from "react";
 import { buildProfile, changedFields, formFromProfile, viewProfile, type EmployeeForm as Fields } from "../../domain/people";
 import EmployeeForm, { statusLabel, typeLabel, type FieldProblem } from "./EmployeeForm";
 import FrameDrawer from "./FrameDrawer";
-import { hostActions, parseRecord, type HostScope } from "./hostActions";
+import { parseRecord, type HostScope } from "./hostActions";
 import { useLocale } from "./locale";
 import { QueryRefresh, useHrQuery } from "./resources";
-import { assertEmployeeNoFree, writeProblem } from "./submit";
+import { updateEmployee, updateFailure } from "./submit";
 
 const FORM_ID = "hr-employee-edit";
 
@@ -33,11 +33,9 @@ export default function EmployeeDrawer({ scope, recordId, canWrite, onClose }: {
     const patch = changedFields(record.profile, profile);
     if (Object.keys(patch).length === 0) { setEditing(false); return; }
     setPending(true); setProblem(null); setStale(false);
-    const free = "employee_no" in patch ? assertEmployeeNoFree(scope, profile.employee_no!, recordId) : Promise.resolve();
-    void free
-      .then(() => hostActions.update(scope, recordId, record.revision, patch))
+    void updateEmployee(scope, record, patch)
       .then((next) => { state.store.write(() => next); setEditing(false); })
-      .catch((e: unknown) => { const r = writeProblem(e, "update", t); setProblem(r.problem); setStale(r.reload); })
+      .catch((e: unknown) => { const r = updateFailure(e, t); setProblem(r.problem); setStale(r.stale); })
       .finally(() => setPending(false));
   };
 

@@ -7,8 +7,9 @@ import { ApiError, sdkMock } from "../support/sdk-mock.mjs";
 mock.module("@cadence/screen-ui", sdkMock);
 
 const { createHostActions } = await import("../../src/features/hr/hostActions.ts");
-const { assertEmployeeNoFree, writeProblem, DUPLICATE_TEXT } = await import("../../src/features/hr/submit.ts");
+const { assertEmployeeNoFree, writeProblem, createEmployee, updateEmployee, updateFailure, DUPLICATE_TEXT } = await import("../../src/features/hr/submit.ts");
 const { FormError, buildProfile, changedFields, EMPTY_FORM } = await import("../../src/domain/people.ts");
+const { zhHK } = await import("../../src/features/hr/localeCatalog.ts");
 
 const scope = { installId: "install-test", digest: "sha256:" + "a".repeat(64) };
 const receipt = (id: string, profile: Record<string, unknown>, revision = 1) => ({ id, revision, digest: "sha256:x", profile, history: [] });
@@ -80,18 +81,65 @@ test("refusal text: duplicate only from the pre-check, reload only where the fra
   const text = (e: unknown, op: "create" | "update") => writeProblem(e, op, identity);
   const pre = text(new FormError("employeeNo", DUPLICATE_TEXT), "create");
   expect(pre).toMatchObject({ kind: "form", reload: false, problem: { field: "employeeNo" } });
-  // A 409 on create never says "duplicate".
+  // A 409 on create after a clean pre-check is most likely a retry of a create that already landed.
   const create409 = text(new ApiError("x", 409, { code: "conflict" }), "create");
-  expect(create409.problem.message).not.toMatch(/already used/);
-  expect(create409).toMatchObject({ kind: "neutral", reload: false, problem: { field: null } });
+  expect(create409).toMatchObject({ kind: "maybe_saved", reload: false, problem: { field: null, message: "This employee may already be saved. Check the list before trying again." } });
+  expect(create409.problem.message).not.toMatch(/already used|could not be saved/);
   // On update a bare conflict gets the neutral text with a reload; a stale code gets the stale text with a reload.
   expect(text(new ApiError("x", 409, { code: "conflict" }), "update")).toMatchObject({ kind: "changed", reload: true });
   expect(text(new ApiError("x", 409, { code: "stale_revision" }), "update")).toMatchObject({ kind: "stale", reload: true });
-  // "Check the fields" only for a 400-class refusal.
-  expect(text(new ApiError("x", 400, { code: "failed" }), "create").problem.message).toMatch(/check the fields/);
-  for (const [status, code] of [[500, "failed2"], [403, "forbidden"], [409, "conflict"], [503, "unavailable"], [504, "timeout"]] as const) {
-    expect(text(new ApiError("x", status, { code }), "create").problem.message).not.toMatch(/check the fields/);
-  }
   expect(text(new ApiError("x", 401, { code: "unauthorized" }), "update").problem.message).toMatch(/session expired/);
   expect(text(new TypeError("boom"), "update").kind).toBe("neutral");
+});
+
+test("the real 400 + failed arrival reads true for a field refusal and a server failure alike", () => {
+  // The board sends any status it does not name (400, 413, 500...) as code `failed`, which app-kit makes status 400.
+  const real = writeProblem(new ApiError("Cadence refused this request.", 400, { code: "failed" }), "create", identity);
+  expect(real.kind).toBe("rejected");
+  expect(real.problem.message).toBe("The change could not be saved. Check the fields, then try again. If it keeps happening, reload the page.");
+  expect(real.reload).toBe(false);
+  // Written in the zh-HK catalogue terms too.
+  const zh = writeProblem(new ApiError("x", 400, { code: "failed" }), "update", (m) => zhHK[m] ?? m);
+  expect(zh.problem.message).toBe("未能儲存這項修改。請檢查各欄位，然後再試一次；如問題持續，請重新載入頁面。");
+  expect(writeProblem(new ApiError("x", 409, { code: "conflict" }), "create", (m) => zhHK[m] ?? m).problem.message).toBe("此員工可能已經儲存。再試之前請先查看名冊。");
+  // Statuses the board names are not "check the fields".
+  for (const [status, code] of [[403, "forbidden"], [404, "not_found"], [503, "unavailable"], [504, "timeout"]] as const) {
+    expect(writeProblem(new ApiError("x", status, { code }), "create", identity).problem.message).not.toMatch(/Check the fields/);
+  }
+});
+
+test("a create retry after a landed write: own row passes the pre-check, the 409 reads as maybe saved", async () => {
+  const profile = buildProfile({ ...EMPTY_FORM, displayName: "Ada Example", employeeNo: "E-1" });
+  const landed = page(receipt("emp-new1", { employee_no: "E-1" }));
+  const { actions, calls } = fake([landed, new ApiError("x", 409, { code: "conflict" })]);
+  const error = await createEmployee(scope, "emp-new1", profile, actions).catch((e) => e);
+  // The pre-check was sent first and the form's own record id was ignored, so the create went out.
+  expect(calls.map((c) => c.verb)).toEqual(["records.list", "records.create"]);
+  expect(writeProblem(error, "create", identity)).toMatchObject({ kind: "maybe_saved" });
+});
+
+test("create looks up the number against its own record id; another row blocks it before any write", async () => {
+  const profile = buildProfile({ ...EMPTY_FORM, displayName: "Ada Example", employeeNo: "E-1" });
+  const other = fake([page(receipt("emp-9", { employee_no: "E-1" }))]);
+  await expect(createEmployee(scope, "emp-new1", profile, other.actions)).rejects.toBeInstanceOf(FormError);
+  expect(other.calls.map((c) => c.verb)).toEqual(["records.list"]);
+});
+
+test("update looks the number up only when it changes, and never against the edited row", async () => {
+  const { actions, calls } = fake([{ record: receipt("emp-1", { job_title: "Lead" }, 3) }]);
+  await updateEmployee(scope, { id: "emp-1", revision: 2 }, { job_title: "Lead" }, actions);
+  expect(calls).toEqual([{ verb: "records.update", args: { record_id: "emp-1", expected_revision: 2, profile: { job_title: "Lead" } } }]);
+  const renumber = fake([page(receipt("emp-1", { employee_no: "E-7" })), { record: receipt("emp-1", { employee_no: "E-7" }, 3) }]);
+  await updateEmployee(scope, { id: "emp-1", revision: 2 }, { employee_no: "E-7" }, renumber.actions);
+  expect(renumber.calls.map((c) => c.verb)).toEqual(["records.list", "records.update"]);
+  const clash = fake([page(receipt("emp-2", { employee_no: "E-7" }))]);
+  await expect(updateEmployee(scope, { id: "emp-1", revision: 2 }, { employee_no: "E-7" }, clash.actions)).rejects.toBeInstanceOf(FormError);
+});
+
+test("the drawer shows the reload button exactly for a stale or changed record", () => {
+  expect(updateFailure(new ApiError("x", 409, { code: "stale_revision" }), identity).stale).toBe(true);
+  expect(updateFailure(new ApiError("x", 409, { code: "conflict" }), identity).stale).toBe(true);
+  expect(updateFailure(new ApiError("x", 503, { code: "unavailable" }), identity).stale).toBe(false);
+  expect(updateFailure(new ApiError("x", 400, { code: "failed" }), identity).stale).toBe(false);
+  expect(updateFailure(new FormError("employeeNo", DUPLICATE_TEXT), identity).stale).toBe(false);
 });
