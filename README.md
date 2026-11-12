@@ -163,13 +163,23 @@ and ask for typed details when the text or the picture is not readable.
 
 `tests/eval/` holds 10 policy questions (with expected citations and four decline cases), 5 leave requests, 5
 receipts and 5 CVs (with protected-attribute and prompt-injection bait), all synthetic, plus deterministic graders
-and golden outputs. The graders judge recorded outputs; no model was run for this release. `eval.test.mjs` checks
-that the hand-written golden outputs pass and that mutations of them fail.
+and golden outputs. The graders judge recorded outputs. No model has been run on the set: every graded output is
+hand-written. `eval.test.mjs` checks that the golden outputs and other correct answers pass and that wrong ones fail.
 
-- An answer case lists every figure the answer may state (`figures`). The answer must state each one and no other
-  figure, so "20 days (the policy says 15)" fails.
+- An answer case lists the figures the answer must state (`figures`). Any other figure it states must appear in the
+  cited policy's body (the skill says to quote or closely paraphrase the clause) or be its effective date, so "20
+  days (the policy says 15)" fails and "capped at 200 per day, within 30 days" passes.
+- Figures are compared as values. English and Chinese number words, including 廿 and the formal 拾/伍 forms, and
+  am/pm times are read as digits first: "fifteen", "15", "十五" and "拾伍" agree, and "4pm" is "16:00". A run of
+  Chinese numerals counts before a unit (日, 天, 週, 個月, 元, 小時) or when no other Chinese character follows it,
+  so 一般 and 每一年 are not figures. "no one" is not a figure. Only the exact citation
+  `Source: <title> (effective <date>)` is left out, so a figure after it on the same line still counts.
 - A decline case lists the policy substance it must not state (`forbid`), for example "in full", "twelve weeks",
-  "Fridays" or "smart casual", and still needs a decline marker. The terms are deliberately strict: a decline that
-  repeats the question's own words (for example "on Fridays") fails and needs a reviewer's eye.
+  "Fridays" or "smart casual", and still needs a decline marker. A term the question itself uses may be repeated in
+  the clause that says no current policy covers it: "No current policy covers working from home on Fridays" passes,
+  and "the draft lets staff work from home on Fridays" fails.
 
-The yes/no judged checks in `cases.json` are for a reviewer.
+What the graders cannot catch: they match keywords, so a leak in other words passes them. "100%" for "in full",
+"84 days" or "three months" for "twelve weeks" and "suit and tie" for a dress code are not seen; a test pins these as
+known limits. A clause-final word such as 唯一 or 統一 reads as the figure 1. The yes/no judged checks in `cases.json`
+are where a reviewer catches a paraphrased leak; they are not run here.
