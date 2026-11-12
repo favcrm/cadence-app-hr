@@ -20,14 +20,25 @@ export const CALL_FIELDS: Record<keyof CallArgs, readonly string[]> = {
   "screen.route.patch": ["section", "view", "record_id", "segment_id", "replace"],
 };
 export const OPERATIONS: string[] = Object.keys(CALL_FIELDS);
+// The board shell's records-frame argument limits. It closes the frame on a larger message, so the screen refuses
+// first. A write carries a policy body or a CV of 12,000 characters (about 36 KB in written Chinese).
+/** Largest `records.create` / `records.update` arguments, in bytes of JSON; the receiver is created with this limit. */
+export const WRITE_BUDGET = 49152;
+/** Largest arguments of every other operation, in bytes of JSON. */
+export const REQUEST_BUDGET = 16384;
+const WRITES: readonly string[] = ["records.create", "records.update"];
+export const isWrite = (verb: string): boolean => WRITES.includes(verb);
+export const requestBudget = (verb: string): number => (isWrite(verb) ? WRITE_BUDGET : REQUEST_BUDGET);
+/** The code of a request the screen refused for its size (the screen words it as "too long"); nothing was sent. */
+const TOO_LARGE = "too_large";
 export function cleanArgs(verb: string, args: Bag): Bag {
   const fields = CALL_FIELDS[verb as keyof CallArgs] as readonly string[] | undefined;
   if (!fields || !args || typeof args !== "object" || Array.isArray(args)) throw new ApiError("Unlisted HR operation", 400);
   for (const key of Object.keys(args)) if (!fields.includes(key)) throw new ApiError(`Refused HR field: ${key}`, 400);
   const value = Object.fromEntries(Object.entries(args).filter(([, v]) => v !== undefined));
-  // The host accepts 128 KiB of arguments; a policy body is the largest write (12,000 characters, up to 36 KB).
-  const cap = ["records.create", "records.update"].includes(verb) ? 98304 : 16384;
-  if (new TextEncoder().encode(JSON.stringify(value)).length > cap) throw new ApiError("The HR request exceeds its operation budget", 413);
+  if (new TextEncoder().encode(JSON.stringify(value)).length > requestBudget(verb)) {
+    throw new ApiError("The HR request exceeds its operation budget", 413, { code: TOO_LARGE });
+  }
   return value;
 }
 const writeListeners = new Set<() => void>();
@@ -36,6 +47,6 @@ const written = () => writeListeners.forEach(f => f());
 export async function serviceCall<T = unknown, K extends keyof CallArgs = keyof CallArgs>(scope: DisplayScope, verb: K, args: CallArgs[K]): Promise<T> {
   assertCurrentScope(scope); requireOperation(verb);
   const result = await channel.request(verb, cleanArgs(verb, args as Bag)) as T;
-  if (verb === "records.create" || verb === "records.update") written();
+  if (isWrite(verb)) written();
   return result;
 }

@@ -97,6 +97,7 @@ export const zhHK: Record<string, string> = {
   "The store could not save this change. If a code may already exist, search for it first; otherwise try again.": "資料庫暫時未能儲存這項修改。如代碼可能已存在，請先搜尋；否則請再試一次。",
   "The workspace did not answer. Check the list before saving again, so the same record is not added twice.": "工作區沒有回應。再次儲存前請先檢查清單，以免重複新增同一筆記錄。",
   "This record may already be saved. Check the list before trying again.": "此記錄可能已經儲存。再試之前請先查看清單。",
+  "This text is too long to save from this screen. Shorten it, then save again.": "文字太長，無法在此畫面儲存。請先縮短，然後再儲存。",
   "This app's access is no longer available here, or these records are for the workspace owner. Reload the page.": "此應用程式在這裏的存取權限已不再可用，或這些記錄只供工作區擁有者使用。請重新載入頁面。",
   "The change was not saved. Check the fields, or the record may already be decided or changed. Reload and look, then try again.": "未有儲存這項修改。請檢查各欄位；記錄也可能已有決定或已被更改。請重新載入查看，然後再試。",
   // Stored values the screen shows as words

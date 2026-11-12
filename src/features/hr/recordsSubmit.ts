@@ -52,6 +52,7 @@ export function setField(scope: HostScope, spec: TableSpec, record: HostRecord, 
  * or "already decided"; only a re-read can say that.
  */
 export const TEXT: Record<Exclude<Failure, "session">, string> = {
+  too_long: "This text is too long to save from this screen. Shorten it, then save again.",
   stale: "Someone else changed this record after you opened it, so your change was not saved. Reload to see the latest version, then reapply your change.",
   changed: "This record could not be saved because it changed or the store is out of step. Reload to see the latest version, then try again.",
   store_unavailable: "The store could not save this change. If a code may already exist, search for it first; otherwise try again.",

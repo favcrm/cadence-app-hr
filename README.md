@@ -116,6 +116,12 @@ the descriptor version, so they are not permanent decisions. In 0.2.0:
 The host reports a refused write as status 400, which the board shows as `failed`: the screen says the record
 "may already be decided" and offers a reload instead of claiming a cause.
 
+Request size: the board closes a records frame whose `records.create` or `records.update` arguments pass 49,152 bytes
+of JSON, or whose other requests pass 16,384. The screen's receiver is created with the 49,152 limit and the bridge
+holds every other operation to 16,384. A 12,000-character policy or CV in written Chinese (about 36 KB) fits. A larger
+write, such as pasted text full of control characters, is refused in the screen before it is sent: "This text is too
+long to save from this screen."
+
 Unique leave type codes: the screen looks for the code exactly before it creates a leave type, and a code cannot be
 changed once saved. Two creates of the same code at the same moment can still both pass that check; the unique index
 then refuses the second. The deployed host answers that refusal with 503, which the screen words as "the store could
