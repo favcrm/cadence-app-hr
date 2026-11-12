@@ -24,19 +24,28 @@ export function parseRecordList(value: unknown): ListReceipt {
   };
 }
 
-export const hostActions = {
-  async list(scope: HostScope, opts: { query?: string; limit?: number; cursor?: string } = {}): Promise<ListReceipt> {
-    if (opts.query !== undefined && (opts.query.length === 0 || opts.query.length > 120 || /[\u0000-\u001f\u007f]/.test(opts.query))) throw new ApiError("The search text is out of bounds", 400);
-    if (opts.limit !== undefined && (!Number.isInteger(opts.limit) || opts.limit < 1 || opts.limit > 100)) throw new ApiError("The page size is out of bounds", 400);
-    if (opts.cursor !== undefined && !RECORD_ID.test(opts.cursor)) throw new ApiError("The page cursor is invalid", 400);
-    return parseRecordList(await serviceCall(scope, "records.list", { ...opts }));
-  },
-  async create(scope: HostScope, recordId: string, profile: unknown): Promise<HostRecord> {
-    if (!RECORD_ID.test(recordId)) throw new ApiError("The record id is invalid", 400);
-    return parseRecord(await serviceCall(scope, "records.create", { record_id: recordId, profile }));
-  },
-  async update(scope: HostScope, recordId: string, expectedRevision: number, profile: unknown): Promise<HostRecord> {
-    if (!RECORD_ID.test(recordId) || !Number.isInteger(expectedRevision) || expectedRevision < 1) throw new ApiError("The record id or revision is invalid", 400);
-    return parseRecord(await serviceCall(scope, "records.update", { record_id: recordId, expected_revision: expectedRevision, profile }));
-  },
-};
+export interface ListOptions { query?: string; limit?: number; cursor?: string; filters?: { field: string; op: "eq"; value: string }[] }
+/** The one function the host client needs: send a records verb for a scope. Tests pass a fake. */
+export type CallFn = (scope: HostScope, verb: "records.list" | "records.create" | "records.update", args: never) => Promise<unknown>;
+export type HostActions = ReturnType<typeof createHostActions>;
+
+export function createHostActions(call: CallFn) {
+  const send = (scope: HostScope, verb: Parameters<CallFn>[1], args: Record<string, unknown>) => call(scope, verb, args as never);
+  return {
+    async list(scope: HostScope, opts: ListOptions = {}): Promise<ListReceipt> {
+      if (opts.query !== undefined && (opts.query.length === 0 || opts.query.length > 120 || /[\u0000-\u001f\u007f]/.test(opts.query))) throw new ApiError("The search text is out of bounds", 400);
+      if (opts.limit !== undefined && (!Number.isInteger(opts.limit) || opts.limit < 1 || opts.limit > 100)) throw new ApiError("The page size is out of bounds", 400);
+      if (opts.cursor !== undefined && !RECORD_ID.test(opts.cursor)) throw new ApiError("The page cursor is invalid", 400);
+      return parseRecordList(await send(scope, "records.list", { ...opts }));
+    },
+    async create(scope: HostScope, recordId: string, profile: unknown): Promise<HostRecord> {
+      if (!RECORD_ID.test(recordId)) throw new ApiError("The record id is invalid", 400);
+      return parseRecord(await send(scope, "records.create", { record_id: recordId, profile }));
+    },
+    async update(scope: HostScope, recordId: string, expectedRevision: number, profile: unknown): Promise<HostRecord> {
+      if (!RECORD_ID.test(recordId) || !Number.isInteger(expectedRevision) || expectedRevision < 1) throw new ApiError("The record id or revision is invalid", 400);
+      return parseRecord(await send(scope, "records.update", { record_id: recordId, expected_revision: expectedRevision, profile }));
+    },
+  };
+}
+export const hostActions = createHostActions((scope, verb, args) => serviceCall(scope, verb, args));

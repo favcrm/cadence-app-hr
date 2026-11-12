@@ -28,6 +28,7 @@ function Body() {
   const [unreachable, setUnreachable] = useState(false);
   // A closed drawer unmounts at once so its scroll lock and focus trap never outlive the close, even if the host refuses the route patch.
   const [dismissed, setDismissed] = useState<string | null>(null);
+  const [savedNotice, setSavedNotice] = useState(false);
   const detail = snapshot?.route.record_id ?? null;
   useEffect(() => { setDismissed(null); }, [detail]);
   useEffect(() => {
@@ -48,12 +49,15 @@ function Body() {
   const canWrite = actions.includes("records.create") && actions.includes("records.update");
   const recordId = detail !== null && detail === dismissed ? null : route.record_id;
   const go = (patch: Parameters<typeof patchRoute>[0]) => { void patchRoute(patch).catch(() => undefined); };
+  // A create that landed but could not move the screen on would leave the owner on a filled form, so say so.
+  const created = (id: string) => { void patchRoute({ view: "list", record_id: id, segment_id: null }).catch(() => setSavedNotice(true)); };
   return (
     <main className="app-outlet hr" key={`${scope.installId}:${snapshot.digest}`}>
       <div className="hr-surface">
+        {savedNotice && <Notice className="mb-2" state="saved">{t("The employee was saved, but this screen could not move on. Reload the page to see the list.")}</Notice>}
         {!canList ? <Notice>{t("This workspace does not offer the people directory to this session.")}</Notice>
           : route.view === "new"
-            ? <EmployeeNew scope={scope} canWrite={canWrite} onCancel={() => go({ view: "list", record_id: null })} onCreated={(id) => go({ view: "list", record_id: id, segment_id: null })} />
+            ? <EmployeeNew scope={scope} canWrite={canWrite} onCancel={() => go({ view: "list", record_id: null })} onCreated={created} />
             : <PeopleList scope={scope} canWrite={canWrite} onNew={() => go({ view: "new", record_id: null })}
                 onSelect={(id) => { setDismissed(null); go({ view: "list", record_id: id }); }} />}
       </div>

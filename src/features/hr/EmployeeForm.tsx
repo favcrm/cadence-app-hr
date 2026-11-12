@@ -5,8 +5,11 @@ import { useLocale } from "./locale";
 
 const TYPE_LABEL: Record<string, string> = { full_time: "Full time", part_time: "Part time", contract: "Contract", intern: "Intern" };
 const STATUS_LABEL: Record<string, string> = { active: "Active", on_leave: "On leave", left: "Left" };
+// An unknown stored value is shown as it is; the translation falls back to the same text.
 export const typeLabel = (v: string | null) => (v ? TYPE_LABEL[v] ?? v : "—");
 export const statusLabel = (v: string | null) => (v ? STATUS_LABEL[v] ?? v : "—");
+/** The offered values, plus the record's own value when it is outside the list, so an edit never rewrites it. */
+const offered = (list: readonly string[], current: string) => (list.includes(current) || current === "" ? list : [...list, current]);
 
 /** A refusal shown under the field it belongs to; anything else shows once above the buttons. */
 export interface FieldProblem { field: keyof Fields | null; message: string }
@@ -51,18 +54,18 @@ export default function EmployeeForm({ initial, formId, problem, onSubmit, child
         {text("department", "Department", `${formId}-dept`, { max: LIMITS.department })}
         <Field label={t("Employment type")} id={`${formId}-type`} error={err("employmentType")} className="hr-field">
           {(c) => <Select id={c.id} full aria-label={t("Employment type")} value={fields.employmentType}
-            onChange={(v) => set({ employmentType: v as Fields["employmentType"] })}
-            options={EMPLOYMENT_TYPES.map((value) => ({ value, label: t(TYPE_LABEL[value]!) }))} />}
+            onChange={(v) => set({ employmentType: v })}
+            options={offered(EMPLOYMENT_TYPES, initial.employmentType).map((value) => ({ value, label: t(typeLabel(value)) }))} />}
         </Field>
       </div>
       <div className="hr-field-row">
-        {text("joinDate", "Join date", `${formId}-join`, { max: 10, required: true, hint: "YYYY-MM-DD", placeholder: "2026-01-31" })}
+        {text("joinDate", "Join date (optional)", `${formId}-join`, { max: 10, hint: "YYYY-MM-DD", placeholder: "2026-01-31" })}
         {text("leaveDate", "Leave date (optional)", `${formId}-leave`, { max: 10, hint: "YYYY-MM-DD" })}
       </div>
       <Field label={t("Status")} id={`${formId}-status`} error={err("status")} className="hr-field">
         {(c) => <Select id={c.id} full aria-label={t("Status")} value={fields.status}
-          onChange={(v) => set({ status: v as Fields["status"] })}
-          options={EMPLOYEE_STATUSES.map((value) => ({ value, label: t(STATUS_LABEL[value]!) }))} />}
+          onChange={(v) => set({ status: v })}
+          options={offered(EMPLOYEE_STATUSES, initial.status).map((value) => ({ value, label: t(statusLabel(value)) }))} />}
       </Field>
       {shown && shown.field === null && <ErrorNotice bare>{shown.message}</ErrorNotice>}
       {children}

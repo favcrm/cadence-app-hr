@@ -15,14 +15,15 @@ export default function EmployeeNew({ scope, canWrite, onCreated, onCancel }: {
   const head = useRef<HTMLHeadingElement | null>(null);
   const [pending, setPending] = useState(false);
   const [problem, setProblem] = useState<FieldProblem | null>(null);
-  // One id per open form: a retry after a lost reply reuses it, so the host refuses a second row instead of adding one.
+  // One id per open form. A retry after a lost reply reuses it: the pre-check ignores this id's own row, and if the
+  // first attempt did land, the host refuses a second create under the same id instead of adding another row.
   const [recordId] = useState(newEmployeeId);
   useEffect(() => { head.current?.focus(); }, []);
 
   const submit = (fields: Fields) => {
     const profile = buildProfile(fields);
     setPending(true); setProblem(null);
-    void assertEmployeeNoFree(scope, profile.employee_no!, null)
+    void assertEmployeeNoFree(scope, profile.employee_no!, recordId)
       .then(() => hostActions.create(scope, recordId, profile))
       .then((record) => onCreated(record.id))
       .catch((error: unknown) => setProblem(writeProblem(error, "create", t).problem))

@@ -9,7 +9,7 @@
     {
       "version": 1,
       "path": "storage/001-initial.json",
-      "sha256": "sha256:733810ea2f962ab9b24f7e99e1d3d0f397ba34ae2751e21b9c425734353bb39f"
+      "sha256": "sha256:2ace1c9fbf2825820497055407b68cc419e7c08521e261b6781d32ce871d66ff"
     }
   ],
   "record_search_columns": ["display_name", "employee_no", "email", "department"]

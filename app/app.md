@@ -19,6 +19,7 @@ listing:
     - Search people by name, employee number, email or department
     - Add and edit employees, with a clear refusal for a duplicate employee number
     - Let the chat agent look people up and stage changes for the owner to approve
+    - Draft a short welcome note for a new employee from facts you paste (text only; it sends nothing)
   screenshots: []
   setup: []
   data:

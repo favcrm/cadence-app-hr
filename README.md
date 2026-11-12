@@ -57,5 +57,18 @@ merged commit is not a published or installed app. Publishing runs from
 `.github/workflows/publish.yml` on a tag and needs the catalogue publisher
 registration; see the Cadence app catalogue guide.
 
+## Storage decisions that cannot change after release
+
+The host has no alter-column operation, so 0.1.0 fixes these:
+
+- `employee_no` is stored in capitals (`^[A-Z0-9_-]{1,32}$`). The screen upper-cases what is typed
+  before it looks for a duplicate and before it writes, which makes the unique index ignore case.
+- `employment_type` and `status` are plain text (`^[a-z_]{1,32}$`) with their defaults, not host enums, so a
+  later release can add a value. The screen owns the offered list and shows an unknown stored value as it is.
+- `join_date` may be empty. A record without one is stored and shown.
+- Dates are text with the pattern `^[0-9-]{10}$`, the strictest the host grammar allows. A write through the
+  agent path is not calendar-validated in this release; the screen shows such a value as stored, and its own
+  form accepts real calendar dates only.
+
 Language: English and written Hong Kong Chinese. The host sends `zh-TW` for
 Chinese; the catalogue behind it is written in Hong Kong usage.

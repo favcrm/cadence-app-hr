@@ -4,7 +4,7 @@ import { assertCurrentScope, requireOperation, type DisplayScope } from "./scope
 
 type Bag = Record<string, unknown>;
 export interface CallArgs {
-  "records.list": { query?: string; limit?: number; cursor?: string };
+  "records.list": { query?: string; limit?: number; cursor?: string; filters?: { field: string; op: "eq"; value: string }[] };
   "records.show": { record_id: string };
   "records.create": { record_id: string; profile: unknown };
   "records.update": { record_id: string; expected_revision: number; profile: unknown };
@@ -12,7 +12,7 @@ export interface CallArgs {
 }
 // A closed field allowlist is checked again at runtime before serialization.
 export const CALL_FIELDS: Record<keyof CallArgs, readonly string[]> = {
-  "records.list": ["query", "limit", "cursor"], "records.show": ["record_id"],
+  "records.list": ["query", "limit", "cursor", "filters"], "records.show": ["record_id"],
   "records.create": ["record_id", "profile"], "records.update": ["record_id", "expected_revision", "profile"],
   "screen.route.patch": ["section", "view", "record_id", "segment_id", "replace"],
 };

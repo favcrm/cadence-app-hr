@@ -9,7 +9,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { parse } from "yaml";
-import { EMPLOYEE_STATUSES, EMPLOYMENT_TYPES, LIMITS } from "../../src/domain/people.ts";
+import { LIMITS } from "../../src/domain/people.ts";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const bytes = (path) => readFileSync(root + path);
@@ -83,7 +83,7 @@ test("the migration satisfies the host's column and operation rules", () => {
       expect(c.json_schema.pattern).toMatch(/^\^\[[A-Za-z0-9_-]+\](\{\d+(,\d+)?\})?\$$/);
     }
     // A non-null column the owner must always supply has no default; a nullable one reads as null when omitted.
-    if (!c.nullable && !("default" in c)) expect(["display_name", "employee_no", "join_date"]).toContain(c.name);
+    if (!c.nullable && !("default" in c)) expect(["display_name", "employee_no"]).toContain(c.name);
   }
   expect(columns.length).toBeLessThanOrEqual(64);
   const indexes = migrations.flatMap((m) => m.body.operations.filter((o) => o.op === "create_index"));
@@ -107,14 +107,21 @@ test("the employees table has the planned columns, a unique employee number, and
     expect(byName[name].type).toBe("text");
     expect(byName[name].json_schema.pattern).toBe("^[0-9-]{10}$");
   }
+  expect(byName.join_date.nullable).toBe(true);
   expect(byName.leave_date.nullable).toBe(true);
   expect(byName.manager_id.nullable).toBe(true);
   expect(byName.member_id.nullable).toBe(true);
 });
 
 test("the screen's enums and bounds are the stored ones", () => {
-  expect(byName.employment_type.enum).toEqual([...EMPLOYMENT_TYPES]);
-  expect(byName.status.enum).toEqual([...EMPLOYEE_STATUSES]);
+  // The closed lists live in the screen: a host enum can never gain a value after release.
+  for (const name of ["employment_type", "status"]) {
+    expect(byName[name].enum).toBeUndefined();
+    expect(byName[name].json_schema.pattern).toBe("^[a-z_]{1,32}$");
+  }
+  expect(byName.employee_no.json_schema.pattern).toBe("^[A-Z0-9_-]{1,32}$");
+  expect(byName.employment_type.default).toBe("full_time");
+  expect(byName.status.default).toBe("active");
   expect(byName.display_name.max_length).toBe(LIMITS.displayName);
   expect(byName.employee_no.max_length).toBe(LIMITS.employeeNo);
   expect(byName.email.max_length).toBe(LIMITS.email);
@@ -129,6 +136,7 @@ test("the manifest names app hr at the package version and requires the four con
   expect(manifest.version).toBe(json("package.json").version);
   expect(manifest.needs.requires.contracts).toEqual({ "app-screens": [1], "screen-records": [1], "screen-startup": [1], "app-storage": [1] });
   expect(manifest.listing.data.personal).toBe(true);
+  expect(manifest.listing.can.join(" ")).toContain("welcome note");
   expect(manifest.listing.tagline.length).toBeLessThanOrEqual(80);
   expect(["marketing", "customers", "operations", "finance", "content", "other"]).toContain(manifest.listing.category);
   expect(descriptor.app).toBe(manifest.app);

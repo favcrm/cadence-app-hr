@@ -67,7 +67,8 @@ function call(verb: string, args: Record<string, unknown>): unknown {
   switch (verb) {
     case "records.list": {
       const q = typeof args.query === "string" ? args.query.toLowerCase() : null;
-      const matched = rows.filter((r) => !q || SEARCH.some((c) => (r.profile[c] ?? "").toLowerCase().includes(q))).sort((a, b) => (a.id < b.id ? -1 : 1));
+      const filters = Array.isArray(args.filters) ? (args.filters as { field: string; op: string; value: string }[]) : [];
+      const matched = rows.filter((r) => (!q || SEARCH.some((c) => (r.profile[c] ?? "").toLowerCase().includes(q))) && filters.every((f) => f.op === "eq" && r.profile[f.field] === f.value)).sort((a, b) => (a.id < b.id ? -1 : 1));
       const after = typeof args.cursor === "string" ? matched.findIndex((r) => r.id === args.cursor) + 1 : 0;
       const limit = typeof args.limit === "number" ? args.limit : 25;
       const page = matched.slice(after, after + limit);

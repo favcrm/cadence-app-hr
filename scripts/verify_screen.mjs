@@ -58,8 +58,6 @@ const allowed=new Set(['@cadence/app-kit','@cadence/screen-ui','@cadence/screen-
 const network=new Set(['fetch','XMLHttpRequest','WebSocket','EventSource','sendBeacon','Worker','SharedWorker','importScripts']);
 for (const path of files(join(root,'src'))) {
   const raw=decoder.decode(readFileSync(path));
-  // Existing extraction-scaffold documentation is provenance input, not code.
-  if (false) continue;
   if (path.endsWith('.css')) {
     if (/(?:@import\s+|url\(\s*)["']?\s*(?:https?:|\/\/)/i.test(raw)) fail(`Network CSS input: ${path}`);
     continue;

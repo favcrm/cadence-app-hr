@@ -37,7 +37,7 @@ export default function EmployeeDrawer({ scope, recordId, canWrite, onClose }: {
     void free
       .then(() => hostActions.update(scope, recordId, record.revision, patch))
       .then((next) => { state.store.write(() => next); setEditing(false); })
-      .catch((e: unknown) => { const r = writeProblem(e, "update", t); setProblem(r.problem); setStale(r.kind === "stale"); })
+      .catch((e: unknown) => { const r = writeProblem(e, "update", t); setProblem(r.problem); setStale(r.reload); })
       .finally(() => setPending(false));
   };
 
@@ -51,7 +51,7 @@ export default function EmployeeDrawer({ scope, recordId, canWrite, onClose }: {
           { key: "dept", term: t("Department"), value: view.department || "—" },
           { key: "type", term: t("Employment type"), value: t(typeLabel(view.employmentType)) },
           { key: "status", term: t("Status"), value: t(statusLabel(view.status)) },
-          { key: "join", term: t("Join date"), value: <span className="num">{view.joinDate || "—"}</span> },
+          { key: "join", term: t("Join date"), value: <span className="num">{view.joinDate ?? "—"}</span> },
           { key: "leave", term: t("Leave date"), value: <span className="num">{view.leaveDate ?? "—"}</span> },
           { key: "email", term: t("Email"), value: <span className="num">{view.email ?? "—"}</span> },
           { key: "phone", term: t("Phone"), value: <span className="num">{view.phone ?? "—"}</span> },
