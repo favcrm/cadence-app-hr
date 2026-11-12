@@ -108,7 +108,8 @@ export function findDuplicate(rows: readonly { id: string; profile: unknown }[],
  * How a refused write reads to the owner. Only what the frame can tell is claimed:
  * - stale: the board kept the stale-revision code;
  * - changed: an update met a 409 (a revision conflict, or the store out of step) and the frame cannot tell which;
- * - store_unavailable: a 503, which is also how the host answers a unique-index violation today;
+ * - store_unavailable: a 503. The deployed host also answers a unique-index violation this way; the next host
+ *   answers 409 `unique_violation`, which the board shows as a plain conflict (see maybe_saved and changed);
  * - maybe_saved: a 409 on create after a clean pre-check, most often a retry of a create that already landed;
  * - rejected: status 400 with code `failed`. The board sends every status it does not name (400, 413, 500...) this
  *   way, so the frame cannot tell a field refusal from a server failure and the text must be true for both;

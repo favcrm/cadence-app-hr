@@ -1,19 +1,18 @@
 // Run every skill package of the app through the host's real reader rules.
 //
-//   bun scripts/host-skills-check.mjs --module <app-skills.ts>
+//   bun scripts/host-skills-check.mjs --module <file>
 //
-// `app-skills.ts` is agenticos-v2 `apps/api/src/tenant-board/app-skills.ts` (AOS-561). Its
-// `skillPackage` and `describeSkills` are the code the hosted agent's `app_skill` and
-// `app_describe` run. Outside the host repository its imports must be resolvable: the bundle
-// grammar (`packages/contracts/src/bundle-grammar/`) and `zod`, with the three helper imports
-// (`marketplace-artifact`, `app-call-summary`, `screen-integrity`) replaced by local stand-ins that
-// the package rules do not use, apart from `plainLine`, which only trims the description.
+// --module is the host's app skill reader: the module exporting `skillPackage` and
+// `describeSkills`, the code the hosted agent's `app_skill` and `app_describe` run. Pass a path
+// into a checkout or an extract of the host's source. Its imports must resolve there: the host's
+// bundle grammar and `zod`. Its three helper imports may be local stand-ins, since the package
+// rules do not use them, apart from `plainLine`, which only trims the description (copy the real one).
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { resolve, relative } from "node:path";
 import { pathToFileURL } from "node:url";
 
 const at = process.argv.indexOf("--module");
-if (at < 0 || !process.argv[at + 1]) { console.error("usage: --module <app-skills.ts>"); process.exit(2); }
+if (at < 0 || !process.argv[at + 1]) { console.error("usage: --module <file>"); process.exit(2); }
 const mod = await import(pathToFileURL(resolve(process.argv[at + 1])).href);
 const root = resolve(import.meta.dirname, "..", "app");
 const files = Object.create(null);

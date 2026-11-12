@@ -1,5 +1,4 @@
-// AOS-376 / AOS-390 / AOS-384 / AOS-431: publish one verified catalogue release
-// from a tag.
+// Publish one verified catalogue release from a tag.
 //
 // OIDC is the only publication path. GitHub proves this repository, workflow
 // and tag; the catalogue then checks them against the reviewed publisher for

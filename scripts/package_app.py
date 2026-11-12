@@ -19,7 +19,7 @@ Scope and honesty notes:
   manifest frontmatter key allowlist. They run offline and do NOT
   reimplement workflow checks, the secret guard, slot cross-checks or
   descriptor parsing — a PASS here is not host validation.
-* AOS-384/CRM-13 adds the `app-storage/v1` member contract: the
+* CRM-13 adds the `app-storage/v1` member contract: the
   `app-storage.json` root descriptor and flat `storage/<tag>.json`
   migrations, checked against the exact declared raw-byte sha256 and a
   pure logical model. That member is a newer-host lexical contract;
@@ -68,7 +68,7 @@ from pathlib import Path, PurePosixPath
 MANIFEST = "app.md"
 # Exact root descriptor names the host admits beside app.md (CAD-1415
 # draft: app-actions.json, app-assistant.json; CRM-3: app-chat.json, the
-# installed 0.1.0 chat contract kept for upgrade; AOS-384/CRM-13:
+# installed 0.1.0 chat contract kept for upgrade; CRM-13:
 # app-storage.json, the app-owned logical schema descriptor). Byte/shape
 # checks only.
 ROOT_DESCRIPTORS = ("app-actions.json", "app-assistant.json", "app-chat.json", "app-storage.json")
@@ -79,7 +79,7 @@ DESCRIPTOR_CONTRACTS = {
     "app-storage.json": "app-storage/v1",
 }
 TOP_DIRS = ("workflows", "rubrics", "templates", "views", "bindings", "screens", "storage", "skills")
-# AOS-561 skill packages: `skills/<tag>/<member>` or one `<references|scripts>/<leaf>` level below it.
+# Skill packages: `skills/<tag>/<member>` or one `<references|scripts>/<leaf>` level below it.
 # Mirrors the bundle grammar v4 `skillsPackage` rule and caps the hosted agent reader enforces.
 SKILLS_DIR = "skills"
 SKILL_MANIFEST = "skill.json"
@@ -93,7 +93,7 @@ SKILL_FILES = 16
 STORAGE_DESCRIPTOR = "app-storage.json"
 STORAGE_DIR = "storage"
 STORAGE_CONTRACT = "app-storage/v1"
-# AOS-384 package member bounds. The host re-validates the same shape at
+# Package member bounds. The host re-validates the same shape at
 # install; these offline bounds keep a hostile bundle from shipping a
 # migration whose declared hash/filename cannot be checked here.
 MAX_STORAGE_DESCRIPTOR_BYTES = 32 * 1024
@@ -606,7 +606,7 @@ def _check_version_semver(version: str, path: Path | None = None) -> None:
         )
 
 
-# --- Skill packages (AOS-561) --------------------------------------------
+# --- Skill packages -----------------------------------------------------
 
 
 def _skill_leaf_ok(leaf: str, extensions: tuple[str, ...]) -> bool:
@@ -666,7 +666,7 @@ def _skill_source_files(root: Path) -> list[str]:
 def check_skills(contents: list[tuple[str, bytes]], where: str) -> None:
     """Each package under skills/ obeys the rules the hosted agent reader enforces.
 
-    Mirrors `skillPackage` (agenticos-v2 `tenant-board/app-skills.ts`) and the native
+    Mirrors the hosted agent reader's `skillPackage` and the native
     `parse_skill_manifest`: a closed `{schema: 1, name, files}` manifest, the declared set equal
     to the present set, 16 members at most, 16 KiB per member, 32 KiB per package. A broken package
     is refused whole. Scripts are listed in a manifest, never run.
@@ -1178,7 +1178,7 @@ def _storage_column(column: object, where: str, table: str) -> dict:
                 f"{where}: column '{name}' format is email, phone or tag on a text column"
             )
     if "json_schema" in column:
-        # The host's app-storage contract (packages/contracts/src/app-storage.ts) admits a
+        # The host's app-storage contract admits a
         # json_schema on any column type; HR bounds its text dates with a pattern. This
         # offline mirror was stricter than the host and is widened to match it.
         _storage_json_schema(column["json_schema"], where, f"column '{name}' json_schema")
@@ -1317,7 +1317,7 @@ def _check_app_storage(
 ) -> None:
     """Validate the app-storage descriptor and its raw-byte-checksummed plan.
 
-    Mirrors the AOS-384 wire contract offline: closed descriptor/migration
+    Mirrors the host's app-storage wire contract offline: closed descriptor/migration
     objects, contiguous versions through `schema_version`, a declared
     default table, and every migration file present with the exact
     declared sha256. A PASS is member/grammar integrity only — it never
@@ -1504,7 +1504,7 @@ def _check_app_storage(
 
 
 def _check_table_options(tables: object, default_table: str, model: dict, where: str) -> None:
-    """The optional per-table rules of the AOS-560 draft contract (`tables` in app-storage.json).
+    """The optional per-table rules of the host contract (`tables` in app-storage.json).
 
     Mirrors `appStorageTableOptionsSchema` and the table checks in `validateAppStorageModel`:
     a closed option object per table, every named table created by a migration, search columns

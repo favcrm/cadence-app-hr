@@ -1,7 +1,6 @@
 // Storage declaration checks: migration pins, contiguity, and a local mirror of the
-// host's app-storage/v1 rules (packages/contracts/src/app-storage.ts in the host
-// repository). The mirror covers the rules this bundle can break; the real schema
-// is exercised separately, see the pull request.
+// host's app-storage/v1 rules. The mirror covers the rules this bundle can break; the
+// host's real schema code is run separately by scripts/host-schema-check.mjs.
 // Run: bun test tests/unit/storage.test.mjs
 
 import { test, expect } from "bun:test";

@@ -6,7 +6,7 @@
   dispatch. Actions pinned to commit SHAs per project convention.
   Publisher boundary tests use the real released Cadence v0.3.2 secret scanner,
   with its archive checksum pinned in CI. This is not storage qualification.
-- `publish.yml` (AOS-376 / AOS-390 / AOS-384 / AOS-431) — tag-driven,
+- `publish.yml` — tag-driven,
   OIDC-only publication of one verified release, listed as `published`
   immediately. The exact pinned native checker supplies only the canonical
   digest/inventory; a hosted-only package (e.g. CRM's `app-storage: [1]`) may be

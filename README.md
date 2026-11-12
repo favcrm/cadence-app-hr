@@ -116,21 +116,35 @@ the descriptor version, so they are not permanent decisions. In 0.2.0:
 The host reports a refused write as status 400, which the board shows as `failed`: the screen says the record
 "may already be decided" and offers a reload instead of claiming a cause.
 
+Unique leave type codes: the screen looks for the code exactly before it creates a leave type, and a code cannot be
+changed once saved. Two creates of the same code at the same moment can still both pass that check; the unique index
+then refuses the second. The deployed host answers that refusal with 503, which the screen words as "the store could
+not save this change; if a code may already exist, search for it first". The hosted board's next release answers 409
+`unique_violation` instead (merged on its staging line, not yet deployed). The board shows that 409 to the frame as a
+generic conflict until a Cadence change ships, so the screen keeps its hedged create wording ("this record may already
+be saved") and never calls it a duplicate without a read that proves it.
+
 Owner-only reads: every table, including `employees` (declared through the `tables` map), carries
-`read_role: "owner"`. Before this release a non-owner member could read every record of an installed app (AOS-559).
+`read_role: "owner"`. Before this release a non-owner member could read every record of an installed app.
+
+A non-owner member who opens this app sees the board close it. Their first read is refused with 403, and the board
+retires the mount and closes the frame on the first 401 or 403, whatever the app does. A 403 can also mean the
+screen's access was withdrawn or an operation is not declared, so the screen never claims one cause: it says "This
+app's access is no longer available here, or these records are for the workspace owner. Reload the page." and, like
+0.1.0, retires its own session on a 403.
 
 ## Verification
 
 ```sh
-# the host's real descriptor, migration, model and write-schema code (agenticos-v2 packages/contracts/src/)
-bun scripts/host-schema-check.mjs --contracts <dir with app-storage.ts and app-storage-validation.ts>
-# the host's real skill reader (agenticos-v2 apps/api/src/tenant-board/app-skills.ts)
-bun scripts/host-skills-check.mjs --module <app-skills.ts>
+# the host's real descriptor, migration, model and write-schema code
+bun scripts/host-schema-check.mjs --storage <host app-storage contract module> --validation <host JSON-schema validation module>
+# the host's real app skill reader (the module exporting skillPackage and describeSkills)
+bun scripts/host-skills-check.mjs --module <host app skill reader module>
 ```
 
-Both need `zod` and `@cfworker/json-schema` resolvable from the host files. They are run by hand against a host
-checkout, not in CI. `tests/unit/storage.test.mjs`, `write_schema.test.mjs` and `skills.test.mjs` hold local mirrors of
-the same rules that CI does run.
+Pass paths into a checkout or an extract of the host's source; `zod` and `@cfworker/json-schema` must resolve from
+there. The scripts are run by hand, not in CI. `tests/unit/storage.test.mjs`, `write_schema.test.mjs` and
+`skills.test.mjs` hold local mirrors of the same rules that CI does run.
 
 ## Files, receipts and CVs
 

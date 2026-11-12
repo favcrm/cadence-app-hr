@@ -1,7 +1,6 @@
-// A local mirror of the hosted agent reader's skill package rules (agenticos-v2
-// `tenant-board/app-skills.ts` `skillPackage`, AOS-561; native `parse_skill_manifest`). The real
-// code is run separately by scripts/host-skills-check.mjs; this mirror lets CI refuse a bad
-// package without the host repository.
+// A local mirror of the hosted agent reader's skill package rules (its `skillPackage`, and the
+// native `parse_skill_manifest`). The real code is run separately by
+// scripts/host-skills-check.mjs; this mirror lets CI refuse a bad package without the host's code.
 export const CAPS = { manifest: 4096, file: 16384, package: 32768, files: 16 };
 const TAG = /^[a-z0-9][a-z0-9-]{0,31}$/;
 const ROOT_EXT = ["md", "txt", "json", "yaml", "yml", "csv", "css", "svg"];

@@ -1,5 +1,4 @@
-# AOS-376 / AOS-390 / AOS-384 / AOS-431: publish one HR release as a verified
-# catalogue listing.
+# Publish one HR release as a verified catalogue listing.
 #
 # Tag-driven and OIDC-only. The catalogue binds this repository, this workflow
 # file and `refs/tags/v<version>` to the HR app id, re-verifies the uploaded
