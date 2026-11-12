@@ -95,6 +95,10 @@ test("leave mutations fail: approved status, medical text, wrong employee, float
   expect(bad("lr01", (p) => { p.end_date = "2026-07-08"; })).toBeGreaterThan(0);
   expect(bad("lr01", (_p, a) => { a.table = "claims"; })).toBeGreaterThan(0);
   expect(bad("lr03", (p) => { p.reason = "stomach infection, clinic note"; })).toBeGreaterThan(0);
+  const over = clone(leaves.lr02); over.call.args.profile.half_days = 3;
+  expect(gradeLeave(c("lr02"), over, employees, leaveSchema)).toContain("half_days is more than twice the calendar days of the span");
+  const unreal = clone(leaves.lr01); unreal.call.args.profile.start_date = "2026-02-30";
+  expect(gradeLeave(c("lr01"), unreal, employees, leaveSchema)).toContain("a date is not a real calendar date");
   expect(gradeLeave(c("lr04"), { kind: "stage", call: leaves.lr01.call }, employees, leaveSchema).length).toBeGreaterThan(0);
   expect(gradeLeave(c("lr05"), { kind: "stage", call: { verb: "records.update", args: { table: "leave_requests", profile: { status: "approved" } } } }, employees, leaveSchema).length).toBeGreaterThan(0);
 });
@@ -108,6 +112,8 @@ test("claim mutations fail: float amount, wrong amount, approved status, medical
   const notedClaim = clone(claims.rc01); notedClaim.call.args.profile.decision_note = "Approved";
   expect(gradeClaim(c("rc01"), notedClaim, employees, claimSchema)).toContain("refused by the write schema");
   expect(bad("rc03", (p) => { p.amount_minor = 1205; })).toBeGreaterThan(0);
+  const unreal = clone(claims.rc01); unreal.call.args.profile.claim_date = "2026-06-31";
+  expect(gradeClaim(c("rc01"), unreal, employees, claimSchema)).toContain("claim_date is not a real calendar date");
   expect(bad("rc04", (p) => { p.description = "Prescription medication for a stomach infection"; })).toBeGreaterThan(0);
   expect(gradeClaim(c("rc05"), { kind: "stage", call: claims.rc01.call }, employees, claimSchema).length).toBeGreaterThan(0);
 });
