@@ -1,9 +1,9 @@
 import { ApiError } from "@cadence/screen-ui";
 import { useSyncExternalStore } from "react";
 import { admitted, exact } from "./channel";
-import { CALL_FIELDS, OPERATIONS } from "./services";
+import { CALL_FIELDS, OPERATIONS, SECTIONS, type Section } from "./services";
 export interface DisplayScope { installId: string; digest: string }
-export interface Route { section: "people"; view: "list" | "new"; record_id: string | null; segment_id: string | null }
+export interface Route { section: Section; view: "list" | "new"; record_id: string | null; segment_id: string | null }
 export interface ReadObservation { operation: string; args: Record<string, unknown>; data: unknown }
 export interface ScopeSnapshot { presentationLocale: "en" | "zh-TW"; scope: DisplayScope; digest: string; actions: string[]; route: Route; observations: ReadObservation[] }
 let snapshot: ScopeSnapshot | null = null;
@@ -22,7 +22,7 @@ const id = (v: unknown): v is string => typeof v === "string" && /^[A-Za-z0-9_-]
 const digest = (v: unknown) => typeof v === "string" && /^sha256:[a-f0-9]{64}$/.test(v);
 function invalid(): never { throw new ApiError("Invalid HR scope projection", 502); }
 export function parseRoute(v: unknown): Route {
-  if (!obj(v) || !exact(v, ["section", "view", "record_id", "segment_id"]) || v.section !== "people" || !["list", "new"].includes(v.view as string) || (v.record_id !== null && !id(v.record_id)) || (v.segment_id !== null && !id(v.segment_id))) invalid();
+  if (!obj(v) || !exact(v, ["section", "view", "record_id", "segment_id"]) || !SECTIONS.includes(v.section as Section) || !["list", "new"].includes(v.view as string) || (v.record_id !== null && !id(v.record_id)) || (v.segment_id !== null && !id(v.segment_id))) invalid();
   return v as unknown as Route;
 }
 export function acceptPush(p: Record<string, unknown>): void {

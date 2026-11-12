@@ -7,14 +7,19 @@
 // Refusals use the codes the hosted board hands a frame: it narrows a host error by HTTP status
 // to unauthorized, forbidden, not_found, conflict, unavailable or failed. A unique-index
 // violation is a store error on the host, so it reaches the frame as `unavailable`.
-import { seedRows, type SeedRow } from "./fixtures";
+import { seedRows, seedTables, type SeedRow } from "./fixtures";
 import type { Route } from "../../src/bridge/scope";
 
 const SCENARIOS = ["loaded", "empty", "loading", "refused", "lost", "stale", "unreachable"] as const;
 type Scenario = (typeof SCENARIOS)[number];
 const LOCALES = ["en", "zh-TW"] as const;
 const ID = /^[A-Za-z0-9_-]{1,128}$/;
-const SEARCH = ["display_name", "employee_no", "email", "department"];
+const SEARCH: Record<string, string[]> = {
+  employees: ["display_name", "employee_no", "email", "department"], policies: ["title", "body"], leave_types: ["code", "name"], leave_requests: ["employee_name", "leave_type", "reason"],
+  claims: ["employee_name", "merchant", "description"], job_openings: ["title"], candidates: ["display_name", "email", "cv_text"],
+};
+const OPEN: Record<string, string> = { leave_requests: "pending", claims: "submitted" };
+const SECTIONS = ["people", "policies", "leave", "claims", "recruiting"];
 const ACTIONS = ["records.list", "records.show", "records.create", "records.update", "screen.route.patch"];
 const INSTALL = "install-preview";
 const DIGEST = `sha256:${"c".repeat(64)}`;
@@ -36,7 +41,9 @@ for (const [id, values, current, key] of [["scenarios", SCENARIOS, scenario, "sc
   }
 }
 
-let rows: SeedRow[] = scenario === "empty" ? [] : seedRows();
+const data: Record<string, SeedRow[]> = scenario === "empty" ? {} : { employees: seedRows(), ...seedTables() };
+const table = (args: Record<string, unknown>) => (typeof args.table === "string" ? args.table : "employees");
+const rowsOf = (name: string) => (data[name] ??= []);
 let route: Route = readRoute();
 let port: MessagePort | null = null;
 let staleOnce = scenario === "stale";
@@ -44,7 +51,8 @@ const nonce = Array.from(crypto.getRandomValues(new Uint8Array(32)), (b) => b.to
 
 function readRoute(): Route {
   const record = query.get("record");
-  return { section: "people", view: query.get("view") === "new" ? "new" : "list", record_id: record && ID.test(record) ? record : null, segment_id: null };
+  const section = query.get("section");
+  return { section: (SECTIONS.includes(section ?? "") ? section : "people") as Route["section"], view: query.get("view") === "new" ? "new" : "list", record_id: record && ID.test(record) ? record : null, segment_id: null };
 }
 const refusal = (code: string, text: string) => ({ code, text });
 class Refused extends Error { constructor(readonly refusal: { code: string; text: string }) { super(refusal.text); } }
@@ -67,8 +75,11 @@ function call(verb: string, args: Record<string, unknown>): unknown {
   switch (verb) {
     case "records.list": {
       const q = typeof args.query === "string" ? args.query.toLowerCase() : null;
-      const filters = Array.isArray(args.filters) ? (args.filters as { field: string; op: string; value: string }[]) : [];
-      const matched = rows.filter((r) => (!q || SEARCH.some((c) => (r.profile[c] ?? "").toLowerCase().includes(q))) && filters.every((f) => f.op === "eq" && r.profile[f.field] === f.value)).sort((a, b) => (a.id < b.id ? -1 : 1));
+      const filters = Array.isArray(args.filters) ? (args.filters as { field: string; op: string; value: unknown }[]) : [];
+      const name = table(args);
+      const columns = SEARCH[name] ?? [];
+      const hit = (f: { field: string; op: string; value: unknown }, r: SeedRow) => (f.op === "in" ? Array.isArray(f.value) && f.value.includes(r.profile[f.field]) : r.profile[f.field] === f.value);
+      const matched = rowsOf(name).filter((r) => (!q || columns.some((c) => String(r.profile[c] ?? "").toLowerCase().includes(q))) && filters.every((f) => hit(f, r))).sort((a, b) => (a.id < b.id ? -1 : 1));
       const after = typeof args.cursor === "string" ? matched.findIndex((r) => r.id === args.cursor) + 1 : 0;
       const limit = typeof args.limit === "number" ? args.limit : 25;
       const page = matched.slice(after, after + limit);
@@ -76,27 +87,34 @@ function call(verb: string, args: Record<string, unknown>): unknown {
       return { records: page.map(receipt), total: matched.length, truncated: more, next_cursor: more ? page.at(-1)!.id : null };
     }
     case "records.show": {
-      const row = rows.find((r) => r.id === args.record_id);
+      const row = rowsOf(table(args)).find((r) => r.id === args.record_id);
       if (!row) throw new Refused(refusal("not_found", "That record is not available."));
       return { record: receipt(row) };
     }
     case "records.create": {
       const id = String(args.record_id);
+      const rows = rowsOf(table(args));
       if (rows.some((r) => r.id === id)) throw new Refused(refusal("conflict", "That changed. Refresh before trying again."));
-      const profile: Record<string, string | null> = { member_id: null, manager_id: null, ...(args.profile as Record<string, string | null>) };
-      if (rows.some((r) => r.profile.employee_no === profile.employee_no)) throw new Refused(refusal("unavailable", "Cadence refused this request. Inspect fresh status before retrying an effect."));
+      const profile = { ...(table(args) === "employees" ? { member_id: null, manager_id: null } : {}), ...(args.profile as Record<string, SeedRow["profile"][string]>) } as SeedRow["profile"];
+      // The write rule the descriptor declares: a staged create can only be open.
+      if (OPEN[table(args)] && profile.status !== undefined && profile.status !== OPEN[table(args)]) throw new Refused(refusal("failed", "Cadence refused this request. Inspect fresh status before retrying an effect."));
+      if (OPEN[table(args)]) profile.status = OPEN[table(args)]!;
+      if (table(args) === "employees" && rows.some((r) => r.profile.employee_no === profile.employee_no)) throw new Refused(refusal("unavailable", "Cadence refused this request. Inspect fresh status before retrying an effect."));
       const row: SeedRow = { id, revision: 1, profile };
-      rows = [...rows, row];
+      rows.push(row);
       return { record: receipt(row) };
     }
     case "records.update": {
+      const rows = rowsOf(table(args));
       const row = rows.find((r) => r.id === args.record_id);
       if (!row) throw new Refused(refusal("not_found", "That record is not available."));
+      // The write rule the descriptor declares: only an open request or claim can change.
+      if (OPEN[table(args)] && row.profile.status !== OPEN[table(args)]) throw new Refused(refusal("failed", "Cadence refused this request. Inspect fresh status before retrying an effect."));
       // The stale scenario: someone else saves first, so the first update meets a newer revision.
       if (staleOnce) { staleOnce = false; row.revision += 1; row.profile = { ...row.profile, job_title: "Changed by someone else" }; }
       if (row.revision !== args.expected_revision) throw new Refused(refusal("conflict", "That changed. Refresh before trying again."));
-      const profile = { ...row.profile, ...(args.profile as Record<string, string | null>) };
-      if (rows.some((r) => r.id !== row.id && r.profile.employee_no === profile.employee_no)) throw new Refused(refusal("unavailable", "Cadence refused this request. Inspect fresh status before retrying an effect."));
+      const profile = { ...row.profile, ...(args.profile as Record<string, SeedRow["profile"][string]>) } as SeedRow["profile"];
+      if (table(args) === "employees" && rows.some((r) => r.id !== row.id && r.profile.employee_no === profile.employee_no)) throw new Refused(refusal("unavailable", "Cadence refused this request. Inspect fresh status before retrying an effect."));
       row.profile = profile; row.revision += 1;
       return { record: receipt(row) };
     }
@@ -107,10 +125,12 @@ function call(verb: string, args: Record<string, unknown>): unknown {
 function navigate(patch: Record<string, unknown>) {
   route = {
     ...route,
+    ...(typeof patch.section === "string" && SECTIONS.includes(patch.section) ? { section: patch.section as Route["section"] } : {}),
     ...(patch.view === "list" || patch.view === "new" ? { view: patch.view } : {}),
     ...(patch.record_id !== undefined ? { record_id: patch.record_id as string | null } : {}),
   };
   const url = new URL(location.href);
+  if (route.section !== "people") url.searchParams.set("section", route.section); else url.searchParams.delete("section");
   if (route.view === "new") url.searchParams.set("view", "new"); else url.searchParams.delete("view");
   if (route.record_id) url.searchParams.set("record", route.record_id); else url.searchParams.delete("record");
   history.replaceState(null, "", url);

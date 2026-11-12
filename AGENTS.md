@@ -10,10 +10,10 @@ reserved `example.invalid` domain.
 Cadence keeps scope, storage execution, approvals and every write. The screen
 uses only the pinned `@cadence/app-kit` receiver and `@cadence/screen-ui`;
 never add a private `postMessage` receiver, a copy of the host frame or host
-CSS. The host contract is `app-storage.ts` (descriptor and
-limits), `app-records.ts` (the `records.*` verbs) and `screen-services.ts`.
+CSS. The host contract is its app storage descriptor and limits, the
+`records.*` verbs and the screen services.
 
-Release scope is in the ticket. 0.1.0 has one table. Do not add salary,
+Release scope is in the ticket. 0.2.0 has seven tables, all owner-only. Do not add salary,
 identity document, bank account or medical columns. Dates are `text` holding
 `YYYY-MM-DD`; money, when it arrives, is an integer in minor units with a
 currency column.

@@ -5,12 +5,58 @@
     {
       "id": "people",
       "label": "People",
-      "prompts": ["Find an employee by name", "Add a new employee", "List employees who have left"],
+      "prompts": [
+        "Find an employee by name",
+        "Add a new employee",
+        "List employees who have left"
+      ],
       "record": {
         "label": "Employee",
-        "prompts": ["Summarise this employee", "Change this employee's job title", "Mark this employee as left"]
+        "prompts": [
+          "Summarise this employee",
+          "Change this employee's job title",
+          "Mark this employee as left"
+        ]
       }
+    },
+    {
+      "id": "policies",
+      "label": "Policies",
+      "prompts": [
+        "What does our leave policy say?",
+        "Which policies are current?",
+        "Draft a new policy for review"
+      ]
+    },
+    {
+      "id": "leave",
+      "label": "Leave",
+      "prompts": [
+        "Request leave for an employee",
+        "Which leave requests are pending?",
+        "List the leave types"
+      ]
+    },
+    {
+      "id": "claims",
+      "label": "Claims",
+      "prompts": [
+        "Record an expense claim from a receipt",
+        "Which claims are waiting for approval?",
+        "Does this claim fit our claims policy?"
+      ]
+    },
+    {
+      "id": "recruiting",
+      "label": "Recruiting",
+      "prompts": [
+        "Draft a job description from my notes",
+        "Screen this candidate against the opening",
+        "Which candidates are at the interview stage?"
+      ]
     }
   ],
-  "presentation": { "showContext": true }
+  "presentation": {
+    "showContext": true
+  }
 }

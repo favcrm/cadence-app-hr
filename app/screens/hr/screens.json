@@ -16,18 +16,18 @@
     {
       "name": "client.js",
       "media_type": "text/javascript",
-      "size": 73284,
-      "sha256": "sha256:837df94f0850a574e0bfd15ea1f9e168fa6f25bbced2f8711f490484ba9be573"
+      "size": 113147,
+      "sha256": "sha256:ce46cbbe407492491ec19973eae54061ebf7535ea3b3cb9425b297d76ceacf76"
     },
     {
       "name": "hr.css",
       "media_type": "text/css",
-      "size": 26186,
-      "sha256": "sha256:4b95103ea557157845a275793a2f279322707a46365a20e0009d2dd208d4143c"
+      "size": 27165,
+      "sha256": "sha256:4dc5e397cbea663299b2afe87e701245d65ee4b03a1347ff98511a9d28824219"
     }
   ],
   "provenance": {
-    "source_digest": "sha256:33f8127e8e1b4c21c2f297b5c04f116caeeeafc8dc51bb957aa40b4f6e2b05e9",
+    "source_digest": "sha256:36dcf0fdb4c3d4b48ebc0bafbee85c04af6276c997fac3df82cb9c3841433455",
     "sdk_digest": "sha256:fd65c974511e63b3996e9fa7e438fb4e39df5f508d11636116ef150fcc123e35",
     "toolchain_digest": "sha256:e21cfc8222db408abe6ba5a482520639d9cf4b96481c19aff4b4246af8a65e42"
   },
@@ -51,6 +51,22 @@
       {
         "id": "people",
         "label": "People"
+      },
+      {
+        "id": "policies",
+        "label": "Policies"
+      },
+      {
+        "id": "leave",
+        "label": "Leave"
+      },
+      {
+        "id": "claims",
+        "label": "Claims"
+      },
+      {
+        "id": "recruiting",
+        "label": "Recruiting"
       }
     ]
   }

@@ -2,15 +2,259 @@
   "contract": "app-storage/v1",
   "app": "hr",
   "record_kind": "employee",
-  "schema_version": 1,
-  "compatible_schema_versions": [1],
+  "schema_version": 2,
+  "compatible_schema_versions": [
+    2
+  ],
   "default_table": "employees",
   "migrations": [
     {
       "version": 1,
       "path": "storage/001-initial.json",
       "sha256": "sha256:e90022e7a06babd0b69ffec315fa7637ae17d2cbf881c10d72a0b216b69da7f1"
+    },
+    {
+      "version": 2,
+      "path": "storage/002-hr-records.json",
+      "sha256": "sha256:3e9227727792d7ae3bda0d7b523fbd0ca95eebac15f93053a711e5496451318b"
     }
   ],
-  "record_search_columns": ["display_name", "employee_no", "email", "department"]
+  "record_search_columns": [
+    "display_name",
+    "employee_no",
+    "email",
+    "department"
+  ],
+  "tables": {
+    "employees": {
+      "read_role": "owner"
+    },
+    "policies": {
+      "search_columns": [
+        "title",
+        "body"
+      ],
+      "read_role": "owner"
+    },
+    "leave_types": {
+      "search_columns": [
+        "code",
+        "name"
+      ],
+      "read_role": "owner"
+    },
+    "leave_requests": {
+      "search_columns": [
+        "employee_name",
+        "leave_type",
+        "reason"
+      ],
+      "write_schema": {
+        "type": "object",
+        "properties": {
+          "operation": {
+            "enum": [
+              "create",
+              "update"
+            ]
+          },
+          "after": {
+            "type": "object",
+            "properties": {
+              "status": {
+                "enum": [
+                  "pending",
+                  "approved",
+                  "rejected",
+                  "cancelled"
+                ]
+              }
+            },
+            "required": [
+              "status"
+            ]
+          }
+        },
+        "required": [
+          "operation",
+          "after"
+        ],
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "operation": {
+                  "const": "create"
+                }
+              },
+              "required": [
+                "operation"
+              ]
+            },
+            "then": {
+              "properties": {
+                "after": {
+                  "properties": {
+                    "status": {
+                      "const": "pending"
+                    },
+                    "decided_on": {
+                      "type": "null"
+                    },
+                    "decision_note": {
+                      "type": "null"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "operation": {
+                  "const": "update"
+                }
+              },
+              "required": [
+                "operation"
+              ]
+            },
+            "then": {
+              "properties": {
+                "before": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "const": "pending"
+                    }
+                  },
+                  "required": [
+                    "status"
+                  ]
+                }
+              },
+              "required": [
+                "before"
+              ]
+            }
+          }
+        ]
+      },
+      "read_role": "owner"
+    },
+    "claims": {
+      "search_columns": [
+        "employee_name",
+        "merchant",
+        "description"
+      ],
+      "write_schema": {
+        "type": "object",
+        "properties": {
+          "operation": {
+            "enum": [
+              "create",
+              "update"
+            ]
+          },
+          "after": {
+            "type": "object",
+            "properties": {
+              "status": {
+                "enum": [
+                  "submitted",
+                  "approved",
+                  "rejected"
+                ]
+              }
+            },
+            "required": [
+              "status"
+            ]
+          }
+        },
+        "required": [
+          "operation",
+          "after"
+        ],
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "operation": {
+                  "const": "create"
+                }
+              },
+              "required": [
+                "operation"
+              ]
+            },
+            "then": {
+              "properties": {
+                "after": {
+                  "properties": {
+                    "status": {
+                      "const": "submitted"
+                    },
+                    "decided_on": {
+                      "type": "null"
+                    },
+                    "decision_note": {
+                      "type": "null"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "operation": {
+                  "const": "update"
+                }
+              },
+              "required": [
+                "operation"
+              ]
+            },
+            "then": {
+              "properties": {
+                "before": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "const": "submitted"
+                    }
+                  },
+                  "required": [
+                    "status"
+                  ]
+                }
+              },
+              "required": [
+                "before"
+              ]
+            }
+          }
+        ]
+      },
+      "read_role": "owner"
+    },
+    "job_openings": {
+      "search_columns": [
+        "title"
+      ],
+      "read_role": "owner"
+    },
+    "candidates": {
+      "search_columns": [
+        "display_name",
+        "email",
+        "cv_text"
+      ],
+      "read_role": "owner"
+    }
+  }
 }

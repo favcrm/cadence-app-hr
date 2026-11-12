@@ -19,7 +19,7 @@ Scope and honesty notes:
   manifest frontmatter key allowlist. They run offline and do NOT
   reimplement workflow checks, the secret guard, slot cross-checks or
   descriptor parsing — a PASS here is not host validation.
-* AOS-384/CRM-13 adds the `app-storage/v1` member contract: the
+* CRM-13 adds the `app-storage/v1` member contract: the
   `app-storage.json` root descriptor and flat `storage/<tag>.json`
   migrations, checked against the exact declared raw-byte sha256 and a
   pure logical model. That member is a newer-host lexical contract;
@@ -68,7 +68,7 @@ from pathlib import Path, PurePosixPath
 MANIFEST = "app.md"
 # Exact root descriptor names the host admits beside app.md (CAD-1415
 # draft: app-actions.json, app-assistant.json; CRM-3: app-chat.json, the
-# installed 0.1.0 chat contract kept for upgrade; AOS-384/CRM-13:
+# installed 0.1.0 chat contract kept for upgrade; CRM-13:
 # app-storage.json, the app-owned logical schema descriptor). Byte/shape
 # checks only.
 ROOT_DESCRIPTORS = ("app-actions.json", "app-assistant.json", "app-chat.json", "app-storage.json")
@@ -78,11 +78,22 @@ DESCRIPTOR_CONTRACTS = {
     "app-chat.json": "app-chat/v1",
     "app-storage.json": "app-storage/v1",
 }
-TOP_DIRS = ("workflows", "rubrics", "templates", "views", "bindings", "screens", "storage")
+TOP_DIRS = ("workflows", "rubrics", "templates", "views", "bindings", "screens", "storage", "skills")
+# Skill packages: `skills/<tag>/<member>` or one `<references|scripts>/<leaf>` level below it.
+# Mirrors the bundle grammar v4 `skillsPackage` rule and caps the hosted agent reader enforces.
+SKILLS_DIR = "skills"
+SKILL_MANIFEST = "skill.json"
+SKILL_ENTRY = "SKILL.md"
+SKILL_ROOT_EXTENSIONS = ("md", "txt", "json", "yaml", "yml", "csv", "css", "svg")
+SKILL_NESTED = {"references": ("md", "txt"), "scripts": ("py", "sh", "js", "mjs")}
+SKILL_MANIFEST_BYTES = 4096
+SKILL_FILE_BYTES = 16384
+SKILL_PACKAGE_BYTES = 32768
+SKILL_FILES = 16
 STORAGE_DESCRIPTOR = "app-storage.json"
 STORAGE_DIR = "storage"
 STORAGE_CONTRACT = "app-storage/v1"
-# AOS-384 package member bounds. The host re-validates the same shape at
+# Package member bounds. The host re-validates the same shape at
 # install; these offline bounds keep a hostile bundle from shipping a
 # migration whose declared hash/filename cannot be checked here.
 MAX_STORAGE_DESCRIPTOR_BYTES = 32 * 1024
@@ -114,8 +125,10 @@ STORAGE_DESCRIPTOR_KEYS = (
     "migrations",
     "record_write_schema",
     "record_search_columns",
+    "tables",
 )
-OPTIONAL_DESCRIPTOR_KEYS = ("record_write_schema", "record_search_columns")
+OPTIONAL_DESCRIPTOR_KEYS = ("record_write_schema", "record_search_columns", "tables")
+TABLE_OPTION_KEYS = ("search_columns", "write_schema", "append_only", "read_role")
 MIGRATION_KEYS = ("version", "path", "sha256")
 COLUMN_KEYS = ("name", "type", "nullable", "default", "max_length", "enum", "format", "json_schema")
 JSON_SCHEMA_TYPES = ("object", "array", "string", "number", "integer", "boolean", "null")
@@ -593,6 +606,121 @@ def _check_version_semver(version: str, path: Path | None = None) -> None:
         )
 
 
+# --- Skill packages -----------------------------------------------------
+
+
+def _skill_leaf_ok(leaf: str, extensions: tuple[str, ...]) -> bool:
+    return any(leaf.endswith(f".{ext}") and len(leaf) > len(ext) + 1 for ext in extensions)
+
+
+def skill_path_ok(rel: str) -> bool:
+    """`bundle_path_ok` for one `skills/<tag>/<member>` path under the v4 grammar."""
+    parts = rel.split("/")
+    if not rel.isascii() or "\\" in rel or "\0" in rel:
+        return False
+    if any(p in ("", ".", "..") or p.startswith(".") for p in parts):
+        return False
+    if len(parts) < 3 or parts[0] != SKILLS_DIR or not TAG_RE.fullmatch(parts[1]):
+        return False
+    member = parts[2:]
+    if len(member) == 1:
+        return _skill_leaf_ok(member[0], SKILL_ROOT_EXTENSIONS)
+    if len(member) == 2 and member[0] in SKILL_NESTED:
+        return _skill_leaf_ok(member[1], SKILL_NESTED[member[0]])
+    return False
+
+
+def skill_file_cap(rel: str) -> int:
+    return SKILL_MANIFEST_BYTES if rel.endswith(f"/{SKILL_MANIFEST}") and rel.count("/") == 2 else SKILL_FILE_BYTES
+
+
+def _skill_source_files(root: Path) -> list[str]:
+    """The real files under `skills/`, refused on any symlink, dotfile or off-grammar member."""
+    found: list[str] = []
+    base = root / SKILLS_DIR
+
+    def walk(directory: Path, rel_dir: str, depth: int) -> None:
+        for entry in sorted(os.scandir(directory), key=lambda e: e.name):
+            rel = f"{rel_dir}/{entry.name}"
+            _check_utf8_name(entry.name, rel_dir)
+            if entry.name.startswith("."):
+                raise PackageError(f"app source entry '{rel}': dotfiles are not app content")
+            if entry.is_symlink():
+                raise PackageError(f"app source entry '{rel}': a symlink — an app folder holds real files only")
+            if entry.is_dir(follow_symlinks=False):
+                # skills/<tag>/ then one references/ or scripts/ level; deeper is refused by the member rule.
+                if depth >= 2 or (depth == 1 and entry.name not in SKILL_NESTED) or (depth == 0 and not TAG_RE.fullmatch(entry.name)):
+                    raise PackageError(f"app source entry '{rel}': not a skill package directory")
+                walk(Path(entry.path), rel, depth + 1)
+                continue
+            if not entry.is_file(follow_symlinks=False):
+                raise PackageError(f"app source entry '{rel}': not a regular file")
+            if depth == 0 or not skill_path_ok(rel):
+                raise PackageError(f"app source entry '{rel}': not a skill package member")
+            found.append(rel)
+
+    walk(base, SKILLS_DIR, 0)
+    return found
+
+
+def check_skills(contents: list[tuple[str, bytes]], where: str) -> None:
+    """Each package under skills/ obeys the rules the hosted agent reader enforces.
+
+    Mirrors the hosted agent reader's `skillPackage` and the native
+    `parse_skill_manifest`: a closed `{schema: 1, name, files}` manifest, the declared set equal
+    to the present set, 16 members at most, 16 KiB per member, 32 KiB per package. A broken package
+    is refused whole. Scripts are listed in a manifest, never run.
+    """
+    files = {rel: data for rel, data in contents if rel.startswith(f"{SKILLS_DIR}/")}
+    for tag in sorted({rel.split("/")[1] for rel in files}):
+        prefix = f"{SKILLS_DIR}/{tag}/"
+        what = f"{where}: skills/{tag}"
+        raw = files.get(prefix + SKILL_MANIFEST)
+        if raw is None:
+            raise PackageError(f"{what}: the package directory has no {SKILL_MANIFEST}")
+        if len(raw) > SKILL_MANIFEST_BYTES:
+            raise PackageError(f"{what}: {SKILL_MANIFEST} is over {SKILL_MANIFEST_BYTES} bytes")
+        manifest = _storage_json(raw, where, prefix + SKILL_MANIFEST)
+        if not isinstance(manifest, dict) or set(manifest) != {"schema", "name", "files"}:
+            raise PackageError(f"{what}: {SKILL_MANIFEST} must hold exactly schema, name and files")
+        if type(manifest["schema"]) is not int or manifest["schema"] != 1:
+            raise PackageError(f"{what}: {SKILL_MANIFEST} schema must be the integer 1")
+        if manifest["name"] != tag:
+            raise PackageError(f"{what}: {SKILL_MANIFEST} name must be the package's directory name")
+        declared = manifest["files"]
+        if not isinstance(declared, list) or not declared:
+            raise PackageError(f"{what}: {SKILL_MANIFEST} declares no files")
+        if len(declared) > SKILL_FILES:
+            raise PackageError(f"{what}: {SKILL_MANIFEST} declares more than {SKILL_FILES} files")
+        seen: list[str] = []
+        for member in declared:
+            if not isinstance(member, str):
+                raise PackageError(f"{what}: {SKILL_MANIFEST} files must all be strings")
+            if member == SKILL_MANIFEST:
+                raise PackageError(f"{what}: {SKILL_MANIFEST} lists itself")
+            if not skill_path_ok(prefix + member):
+                raise PackageError(f"{what}: declared member {member!r} is not a package member")
+            if member in seen:
+                raise PackageError(f"{what}: declared member {member!r} twice")
+            seen.append(member)
+        if SKILL_ENTRY not in seen:
+            raise PackageError(f"{what}: {SKILL_MANIFEST} does not declare {SKILL_ENTRY}")
+        present = {rel[len(prefix):] for rel in files if rel.startswith(prefix)}
+        for member in seen:
+            if member not in present:
+                raise PackageError(f"{what}: declared member {member!r} is missing from the bundle")
+        for member in sorted(present - {SKILL_MANIFEST} - set(seen)):
+            raise PackageError(f"{what}: the bundle carries {member!r}, which {SKILL_MANIFEST} does not declare")
+        total = len(raw)
+        for member in seen:
+            size = len(files[prefix + member])
+            if size > SKILL_FILE_BYTES:
+                raise PackageError(f"{what}: {member} is over {SKILL_FILE_BYTES} bytes")
+            total += size
+        if total > SKILL_PACKAGE_BYTES:
+            raise PackageError(f"{what}: the package is over {SKILL_PACKAGE_BYTES} bytes")
+
+
 # --- Bundle file inventory (mirrors host bundle_files shape rules) ----
 
 
@@ -665,6 +793,9 @@ def bundle_files(root: Path) -> list[str]:
         )
 
     for top in dirs:
+        if top == SKILLS_DIR:
+            files.extend(_skill_source_files(root))
+            continue
         if top == "screens":
             tags = sorted(os.scandir(root / top), key=lambda e: e.name)
             if len(tags) != 1 or tags[0].name != "hr" or tags[0].is_symlink() or not tags[0].is_dir(follow_symlinks=False):
@@ -734,6 +865,8 @@ def screen_leaf(name: str) -> bool:
 
 
 def file_cap(rel: str) -> int:
+    if rel.startswith(f"{SKILLS_DIR}/"):
+        return skill_file_cap(rel)
     if rel == STORAGE_DESCRIPTOR:
         return MAX_STORAGE_DESCRIPTOR_BYTES
     if rel.startswith(f"{STORAGE_DIR}/"):
@@ -1045,13 +1178,9 @@ def _storage_column(column: object, where: str, table: str) -> dict:
                 f"{where}: column '{name}' format is email, phone or tag on a text column"
             )
     if "json_schema" in column:
-        # The host's app-storage contract (packages/contracts/src/app-storage.ts) admits a
+        # The host's app-storage contract admits a
         # json_schema on any column type; HR bounds its text dates with a pattern. This
         # offline mirror was stricter than the host and is widened to match it.
-        if ctype not in ("json", "text"):
-            raise PackageError(
-                f"{where}: column '{name}' json_schema applies to a json or text column"
-            )
         _storage_json_schema(column["json_schema"], where, f"column '{name}' json_schema")
     return column
 
@@ -1188,7 +1317,7 @@ def _check_app_storage(
 ) -> None:
     """Validate the app-storage descriptor and its raw-byte-checksummed plan.
 
-    Mirrors the AOS-384 wire contract offline: closed descriptor/migration
+    Mirrors the host's app-storage wire contract offline: closed descriptor/migration
     objects, contiguous versions through `schema_version`, a declared
     default table, and every migration file present with the exact
     declared sha256. A PASS is member/grammar integrity only — it never
@@ -1370,6 +1499,50 @@ def _check_app_storage(
             if name in seen:
                 raise PackageError(f"{where}: record_search_columns repeats column '{name}'")
             seen.append(name)
+    if "tables" in doc:
+        _check_table_options(doc["tables"], default_table, model, where)
+
+
+def _check_table_options(tables: object, default_table: str, model: dict, where: str) -> None:
+    """The optional per-table rules of the host contract (`tables` in app-storage.json).
+
+    Mirrors `appStorageTableOptionsSchema` and the table checks in `validateAppStorageModel`:
+    a closed option object per table, every named table created by a migration, search columns
+    that are declared text or JSON columns, and no search columns or write schema for the default
+    table (those stay at the descriptor's top level).
+    """
+    if not isinstance(tables, dict) or len(tables) > MAX_STORAGE_TABLES:
+        raise PackageError(f"{where}: tables is an object of at most {MAX_STORAGE_TABLES} tables")
+    for name, options in tables.items():
+        if not isinstance(name, str) or not STORAGE_IDENT_RE.fullmatch(name):
+            raise PackageError(f"{where}: tables key {name!r} is not a lowercase identifier")
+        if not isinstance(options, dict) or set(options) - set(TABLE_OPTION_KEYS):
+            raise PackageError(
+                f"{where}: tables.{name} options are closed — {sorted(TABLE_OPTION_KEYS)}"
+            )
+        if name not in model:
+            raise PackageError(f'{where}: tables names "{name}", which no migration creates')
+        if name == default_table and ("search_columns" in options or "write_schema" in options):
+            raise PackageError(
+                f"{where}: the default table declares search_columns and write_schema at the "
+                "top level (record_search_columns, record_write_schema), not in tables"
+            )
+        if "search_columns" in options:
+            search = options["search_columns"]
+            if not isinstance(search, list) or not 1 <= len(search) <= MAX_TABLE_COLUMNS or len(set(map(str, search))) != len(search):
+                raise PackageError(f"{where}: tables.{name}.search_columns is 1-{MAX_TABLE_COLUMNS} distinct column names")
+            for column in search:
+                declared = model[name]["columns"].get(column) if isinstance(column, str) else None
+                if declared is None or declared["type"] not in ("text", "json"):
+                    raise PackageError(
+                        f"{where}: tables.{name}.search_columns must name declared text or JSON columns"
+                    )
+        if "write_schema" in options:
+            _storage_json_schema(options["write_schema"], where, f"tables.{name}.write_schema")
+        if "append_only" in options and not isinstance(options["append_only"], bool):
+            raise PackageError(f"{where}: tables.{name}.append_only is a boolean")
+        if "read_role" in options and options["read_role"] != "owner":
+            raise PackageError(f'{where}: tables.{name}.read_role can only be "owner"')
 
 
 def check_pairing(manifest: Manifest, files: list[str], where: str) -> None:
@@ -1483,6 +1656,7 @@ def check_file_bytes(
             ) from e
         if rel in DESCRIPTOR_CONTRACTS:
             _check_descriptor_json(rel, text, where)
+    check_skills(contents, where)
     _check_app_storage(contents, where, app)
 
 
@@ -1885,6 +2059,12 @@ def _check_member_tree(rels: list[str], archive_name: str) -> None:
             files.append(rel)
             continue
         parts = PurePosixPath(rel).parts
+        if parts[0] == SKILLS_DIR:
+            if not skill_path_ok(rel):
+                raise PackageError(f"{archive_name}: member {rel} is not a skill package member")
+            files.append(rel)
+            dirs.add("skills")
+            continue
         if len(parts) == 3 and parts[:2] == ("screens", "hr") and screen_leaf(parts[2]):
             files.append(rel)
             dirs.add("screens")
@@ -1949,6 +2129,11 @@ def _check_member_dir(drel: str, archive_name: str, prefix: str, full: str) -> N
             f"{archive_name}: directory member {full} is outside the bundle root {prefix}"
         )
     if drel.rstrip("/") == "screens/hr":
+        return
+    dparts = drel.rstrip("/").split("/")
+    if dparts[0] == SKILLS_DIR and len(dparts) <= 3:
+        if (len(dparts) >= 2 and not TAG_RE.fullmatch(dparts[1])) or (len(dparts) == 3 and dparts[2] not in SKILL_NESTED):
+            raise PackageError(f"{archive_name}: directory member {full} is not a skill package directory")
         return
     if not drel or "/" in drel.rstrip("/"):
         raise PackageError(

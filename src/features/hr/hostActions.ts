@@ -1,5 +1,5 @@
 import { ApiError } from "@cadence/screen-ui";
-import { serviceCall } from "../../bridge/services";
+import { serviceCall, type RecordFilter } from "../../bridge/services";
 
 /** The installation and record ids come from the verified scope or the host's own rows, never from a form field. */
 export interface HostScope { installId: string; digest: string }
@@ -24,9 +24,9 @@ export function parseRecordList(value: unknown): ListReceipt {
   };
 }
 
-export interface ListOptions { query?: string; limit?: number; cursor?: string; filters?: { field: string; op: "eq"; value: string }[] }
+export interface ListOptions { table?: string; query?: string; limit?: number; cursor?: string; filters?: RecordFilter[]; order_by?: { field: string; direction?: "asc" | "desc" } }
 /** The one function the host client needs: send a records verb for a scope. Tests pass a fake. */
-export type CallFn = (scope: HostScope, verb: "records.list" | "records.create" | "records.update", args: never) => Promise<unknown>;
+export type CallFn = (scope: HostScope, verb: "records.list" | "records.show" | "records.create" | "records.update", args: never) => Promise<unknown>;
 export type HostActions = ReturnType<typeof createHostActions>;
 
 export function createHostActions(call: CallFn) {
@@ -38,13 +38,17 @@ export function createHostActions(call: CallFn) {
       if (opts.cursor !== undefined && !RECORD_ID.test(opts.cursor)) throw new ApiError("The page cursor is invalid", 400);
       return parseRecordList(await send(scope, "records.list", { ...opts }));
     },
-    async create(scope: HostScope, recordId: string, profile: unknown): Promise<HostRecord> {
+    async show(scope: HostScope, recordId: string, table?: string): Promise<HostRecord> {
       if (!RECORD_ID.test(recordId)) throw new ApiError("The record id is invalid", 400);
-      return parseRecord(await send(scope, "records.create", { record_id: recordId, profile }));
+      return parseRecord(await send(scope, "records.show", { record_id: recordId, ...(table ? { table } : {}) }));
     },
-    async update(scope: HostScope, recordId: string, expectedRevision: number, profile: unknown): Promise<HostRecord> {
+    async create(scope: HostScope, recordId: string, profile: unknown, table?: string): Promise<HostRecord> {
+      if (!RECORD_ID.test(recordId)) throw new ApiError("The record id is invalid", 400);
+      return parseRecord(await send(scope, "records.create", { record_id: recordId, profile, ...(table ? { table } : {}) }));
+    },
+    async update(scope: HostScope, recordId: string, expectedRevision: number, profile: unknown, table?: string): Promise<HostRecord> {
       if (!RECORD_ID.test(recordId) || !Number.isInteger(expectedRevision) || expectedRevision < 1) throw new ApiError("The record id or revision is invalid", 400);
-      return parseRecord(await send(scope, "records.update", { record_id: recordId, expected_revision: expectedRevision, profile }));
+      return parseRecord(await send(scope, "records.update", { record_id: recordId, expected_revision: expectedRevision, profile, ...(table ? { table } : {}) }));
     },
   };
 }

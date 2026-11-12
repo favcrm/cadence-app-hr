@@ -19,7 +19,7 @@ exact(decl.provenance,['source_digest','sdk_digest','toolchain_digest']);
 const expected = {source_digest:`sha256:${sourceDigest()}`,sdk_digest:`sha256:${env.pin.archive.sha256}`,toolchain_digest:`sha256:${hash(JSON.stringify(env.pin.toolchain))}`};
 if (Object.keys(expected).some(k => decl.provenance[k] !== expected[k])) fail('Source/SDK/toolchain provenance mismatch');
 exact(decl.navigation,['section_query','default_section','sections']);
-const navigation={section_query:'hr',default_section:'people',sections:[{id:'people',label:'People'}]};
+const navigation={section_query:'hr',default_section:'people',sections:[{id:'people',label:'People'},{id:'policies',label:'Policies'},{id:'leave',label:'Leave'},{id:'claims',label:'Claims'},{id:'recruiting',label:'Recruiting'}]};
 if (JSON.stringify(decl.navigation) !== JSON.stringify(navigation)) fail('HR navigation mismatch');
 const media={js:'text/javascript',css:'text/css',svg:'image/svg+xml',json:'application/json'};
 if (!Array.isArray(decl.assets) || !decl.assets.length || decl.assets.length > 32) fail('Asset count exceeds bounds');

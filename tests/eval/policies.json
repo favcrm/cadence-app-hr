@@ -1,0 +1,14 @@
+{
+  "note": "Synthetic policy rows the evaluation questions run against. Invented company, invented rules. Not real policy text.",
+  "today": "2026-06-15",
+  "policies": [
+    {"id": "pol-e01", "title": "Annual leave (sample)", "category": "leave", "language": "en", "effective_from": "2026-01-01", "status": "current", "body": "Sample rule: each full-time employee has 15 days of annual leave per leave year. Unused days lapse at year end."},
+    {"id": "pol-e02", "title": "Meal claims (sample)", "category": "claims", "language": "en", "effective_from": "2026-02-01", "status": "current", "body": "Sample rule: a meal claim needs a receipt and is capped at 200 per day. Submit within 30 days of the receipt date."},
+    {"id": "pol-e03", "title": "Medical benefit (sample)", "category": "benefits", "language": "en", "effective_from": "2025-07-01", "status": "current", "body": "Sample rule: the medical benefit covers one general check-up per year after probation."},
+    {"id": "pol-e04", "title": "Working hours (sample)", "category": "attendance", "language": "en", "effective_from": "2026-01-01", "status": "current", "body": "Sample rule: core hours are 10:00 to 16:00. Staff agree their remaining hours with their manager."},
+    {"id": "pol-e05", "title": "Old travel rule (sample)", "category": "claims", "language": "en", "effective_from": "2024-01-01", "status": "retired", "body": "Sample rule, no longer in force: taxi fares were reimbursed in full."},
+    {"id": "pol-e06", "title": "Remote work (sample)", "category": "general", "language": "en", "effective_from": "2026-05-01", "status": "draft", "body": "Sample draft: remote work on Fridays. Not approved."},
+    {"id": "pol-e07", "title": "Parental leave (sample)", "category": "leave", "language": "en", "effective_from": "2026-09-01", "status": "current", "body": "Sample rule: begins in the future. Twelve weeks of parental leave."},
+    {"id": "pol-e08", "title": "年假政策（樣本）", "category": "leave", "language": "zh-HK", "effective_from": "2026-01-01", "status": "current", "body": "樣本規則：全職員工每年有十五日年假。"}
+  ]
+}
