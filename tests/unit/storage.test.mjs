@@ -21,8 +21,12 @@ const IDENTIFIER = /^[a-z][a-z0-9_]{0,62}$/;
 const HOST_COLUMNS = ["id", "context_id", "revision", "created_at", "updated_at"];
 const COLUMN_TYPES = ["text", "integer", "real", "boolean", "json"];
 const FORMATS = ["email", "phone", "tag"];
-const columns = migrations.flatMap((m) => m.body.operations.filter((o) => o.op === "create_table").flatMap((o) => o.columns));
-const byName = Object.fromEntries(columns.map((c) => [c.name, c]));
+const tableOps = migrations.flatMap((m) => m.body.operations.filter((o) => o.op === "create_table"));
+const columns = tableOps.flatMap((o) => o.columns);
+// The employees table is created by migration 1; its columns are looked up by name.
+const employeeColumns = migrations[0].body.operations.find((o) => o.op === "create_table" && o.table === "employees").columns;
+const byName = Object.fromEntries(employeeColumns.map((c) => [c.name, c]));
+const REQUIRED_NO_DEFAULT = ["display_name", "employee_no", "employee_id", "employee_name", "leave_type", "start_date", "end_date", "half_days", "claim_date", "amount_minor", "currency", "title", "body", "effective_from", "code", "name", "paid", "opening_id"];
 
 test("every migration file's sha256 equals its pin and migrations are contiguous from 1", () => {
   expect(descriptor.migrations.length).toBe(descriptor.schema_version);
@@ -36,8 +40,13 @@ test("every migration file's sha256 equals its pin and migrations are contiguous
   expect(descriptor.compatible_schema_versions).toContain(descriptor.schema_version);
 });
 
+test("migration 001 is byte-identical to the 0.1.0 release", () => {
+  // The host has no alter operation: a released migration never changes.
+  expect(createHash("sha256").update(bytes("app/storage/001-initial.json")).digest("hex")).toBe("e90022e7a06babd0b69ffec315fa7637ae17d2cbf881c10d72a0b216b69da7f1");
+});
+
 test("the descriptor satisfies the host's descriptor rules", () => {
-  expect(Object.keys(descriptor).sort()).toEqual(["app", "compatible_schema_versions", "contract", "default_table", "migrations", "record_kind", "record_search_columns", "schema_version"]);
+  expect(Object.keys(descriptor).sort()).toEqual(["app", "compatible_schema_versions", "contract", "default_table", "migrations", "record_kind", "record_search_columns", "schema_version", "tables"]);
   expect(descriptor.contract).toBe("app-storage/v1");
   expect(descriptor.app).toMatch(/^[a-z0-9][a-z0-9-]{0,31}$/);
   expect(descriptor.record_kind).toMatch(/^[a-z][a-z0-9_-]{0,31}$/);
@@ -62,12 +71,15 @@ test("the migration satisfies the host's column and operation rules", () => {
     }
   }
   expect(operations).toBeLessThan(128);
-  const seen = new Set();
+  for (const o of tableOps) {
+    const names = o.columns.map((c) => c.name);
+    expect(new Set(names).size).toBe(names.length);
+    expect(names.length).toBeLessThanOrEqual(64);
+  }
+  const seen = new Set(columns.map((c) => c.name));
   for (const c of columns) {
     expect(c.name).toMatch(IDENTIFIER);
     expect(HOST_COLUMNS).not.toContain(c.name);
-    expect(seen.has(c.name)).toBe(false);
-    seen.add(c.name);
     expect(Object.keys(c).every((k) => ["name", "type", "nullable", "default", "max_length", "enum", "format", "json_schema"].includes(k))).toBe(true);
     expect(COLUMN_TYPES).toContain(c.type);
     expect(typeof c.nullable).toBe("boolean");
@@ -78,14 +90,17 @@ test("the migration satisfies the host's column and operation rules", () => {
     if ("default" in c && c.type === "text" && c.default !== null) expect(typeof c.default).toBe("string");
     if (c.json_schema !== undefined) {
       // The host admits one scalar type name and one anchored ASCII character class with one linear quantifier.
-      expect(Object.keys(c.json_schema).sort()).toEqual(["pattern", "type"]);
-      expect(c.json_schema.type).toBe("string");
-      expect(c.json_schema.pattern).toMatch(/^\^\[[A-Za-z0-9_-]+\](\{\d+(,\d+)?\})?\$$/);
+      if (c.type === "text") {
+        expect(Object.keys(c.json_schema).sort()).toEqual(["pattern", "type"]);
+        expect(c.json_schema.type).toBe("string");
+        expect(c.json_schema.pattern).toMatch(/^\^\[[A-Za-z0-9_-]+\](\{\d+(,\d+)?\})?\$$/);
+      } else if (c.type === "integer") {
+        expect(Object.keys(c.json_schema).sort()).toEqual(["maximum", "minimum", "type"]);
+      }
     }
     // A non-null column the owner must always supply has no default; a nullable one reads as null when omitted.
-    if (!c.nullable && !("default" in c)) expect(["display_name", "employee_no"]).toContain(c.name);
+    if (!c.nullable && !("default" in c)) expect(REQUIRED_NO_DEFAULT).toContain(c.name);
   }
-  expect(columns.length).toBeLessThanOrEqual(64);
   const indexes = migrations.flatMap((m) => m.body.operations.filter((o) => o.op === "create_index"));
   for (const index of indexes) {
     expect(index.name).toMatch(IDENTIFIER);
@@ -96,12 +111,12 @@ test("the migration satisfies the host's column and operation rules", () => {
 });
 
 test("the employees table has the planned columns, a unique employee number, and no sensitive column", () => {
-  expect(columns.map((c) => c.name)).toEqual([
+  expect(employeeColumns.map((c) => c.name)).toEqual([
     "display_name", "employee_no", "email", "phone", "job_title", "department", "employment_type", "join_date", "leave_date", "manager_id", "status", "member_id",
   ]);
   const unique = migrations[0].body.operations.filter((o) => o.op === "create_index" && o.unique);
   expect(unique.map((o) => o.columns)).toEqual([["employee_no"]]);
-  for (const c of columns) expect(c.name).not.toMatch(/salary|pay|hkid|identity|passport|bank|account|medical|health|mpf/);
+  for (const c of columns) expect(c.name).not.toMatch(/salary|pay|hkid|identity|passport|bank|account|medical|health|mpf|(^|_)age(_|$)|gender|birth|marital|family/);
   // Dates are text holding YYYY-MM-DD; the contract has no date type.
   for (const name of ["join_date", "leave_date"]) {
     expect(byName[name].type).toBe("text");

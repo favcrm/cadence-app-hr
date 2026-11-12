@@ -1,0 +1,19 @@
+[
+  {"name": "leave: a staged create must be pending", "table": "leave_requests", "operation": "create", "before": null, "after": {"status": "pending"}, "ok": true},
+  {"name": "leave: a create that is already approved is refused", "table": "leave_requests", "operation": "create", "before": null, "after": {"status": "approved"}, "ok": false},
+  {"name": "leave: a create with an unknown status is refused", "table": "leave_requests", "operation": "create", "before": null, "after": {"status": "on_hold"}, "ok": false},
+  {"name": "leave: a pending request can be approved", "table": "leave_requests", "operation": "update", "before": {"status": "pending"}, "after": {"status": "approved"}, "ok": true},
+  {"name": "leave: a pending request can be edited", "table": "leave_requests", "operation": "update", "before": {"status": "pending"}, "after": {"status": "pending"}, "ok": true},
+  {"name": "leave: an update to an unknown status is refused", "table": "leave_requests", "operation": "update", "before": {"status": "pending"}, "after": {"status": "on_hold"}, "ok": false},
+  {"name": "leave: an approved request cannot change", "table": "leave_requests", "operation": "update", "before": {"status": "approved"}, "after": {"status": "approved"}, "ok": false},
+  {"name": "leave: a rejected request cannot be reopened", "table": "leave_requests", "operation": "update", "before": {"status": "rejected"}, "after": {"status": "pending"}, "ok": false},
+  {"name": "leave: a cancelled request cannot change", "table": "leave_requests", "operation": "update", "before": {"status": "cancelled"}, "after": {"status": "approved"}, "ok": false},
+  {"name": "leave: a future status value is frozen too", "table": "leave_requests", "operation": "update", "before": {"status": "something_new"}, "after": {"status": "approved"}, "ok": false},
+  {"name": "claims: a staged create must be submitted", "table": "claims", "operation": "create", "before": null, "after": {"status": "submitted", "amount_minor": 1250}, "ok": true},
+  {"name": "claims: a create that is already approved is refused", "table": "claims", "operation": "create", "before": null, "after": {"status": "approved", "amount_minor": 1250}, "ok": false},
+  {"name": "claims: a submitted claim can be corrected", "table": "claims", "operation": "update", "before": {"status": "submitted", "amount_minor": 1250}, "after": {"status": "submitted", "amount_minor": 1300}, "ok": true},
+  {"name": "claims: a submitted claim can be approved", "table": "claims", "operation": "update", "before": {"status": "submitted", "amount_minor": 1250}, "after": {"status": "approved", "amount_minor": 1250}, "ok": true},
+  {"name": "claims: an approved claim's amount cannot change", "table": "claims", "operation": "update", "before": {"status": "approved", "amount_minor": 1250}, "after": {"status": "approved", "amount_minor": 9999}, "ok": false},
+  {"name": "claims: an approved claim cannot change at all in 0.2.0", "table": "claims", "operation": "update", "before": {"status": "approved", "amount_minor": 1250}, "after": {"status": "paid", "amount_minor": 1250}, "ok": false},
+  {"name": "claims: a rejected claim cannot be reopened", "table": "claims", "operation": "update", "before": {"status": "rejected", "amount_minor": 1250}, "after": {"status": "submitted", "amount_minor": 1250}, "ok": false}
+]

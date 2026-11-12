@@ -1,0 +1,91 @@
+{
+  "version": 2,
+  "operations": [
+    {
+      "op": "create_table",
+      "table": "policies",
+      "record_bytes": 131072,
+      "columns": [
+        {"name": "title", "type": "text", "nullable": false, "max_length": 120},
+        {"name": "category", "type": "text", "nullable": false, "default": "general", "max_length": 32, "json_schema": {"type": "string", "pattern": "^[a-z0-9_]{1,32}$"}},
+        {"name": "body", "type": "text", "nullable": false, "max_length": 12000},
+        {"name": "language", "type": "text", "nullable": false, "default": "en", "max_length": 16, "json_schema": {"type": "string", "pattern": "^[A-Za-z0-9-]{2,16}$"}},
+        {"name": "effective_from", "type": "text", "nullable": false, "max_length": 10, "json_schema": {"type": "string", "pattern": "^[0-9-]{10}$"}},
+        {"name": "status", "type": "text", "nullable": false, "default": "draft", "max_length": 32, "json_schema": {"type": "string", "pattern": "^[a-z0-9_]{1,32}$"}}
+      ]
+    },
+    {
+      "op": "create_table",
+      "table": "leave_types",
+      "columns": [
+        {"name": "code", "type": "text", "nullable": false, "max_length": 32, "json_schema": {"type": "string", "pattern": "^[A-Z0-9_-]{1,32}$"}},
+        {"name": "name", "type": "text", "nullable": false, "max_length": 80},
+        {"name": "paid", "type": "boolean", "nullable": false},
+        {"name": "accrual_rule", "type": "json", "nullable": true}
+      ]
+    },
+    {"op": "create_index", "table": "leave_types", "name": "leave_types_code", "columns": ["code"], "unique": true},
+    {
+      "op": "create_table",
+      "table": "leave_requests",
+      "columns": [
+        {"name": "employee_id", "type": "text", "nullable": false, "max_length": 128, "json_schema": {"type": "string", "pattern": "^[A-Za-z0-9_-]{1,128}$"}},
+        {"name": "employee_name", "type": "text", "nullable": false, "max_length": 120},
+        {"name": "leave_type", "type": "text", "nullable": false, "max_length": 32, "json_schema": {"type": "string", "pattern": "^[A-Z0-9_-]{1,32}$"}},
+        {"name": "start_date", "type": "text", "nullable": false, "max_length": 10, "json_schema": {"type": "string", "pattern": "^[0-9-]{10}$"}},
+        {"name": "end_date", "type": "text", "nullable": false, "max_length": 10, "json_schema": {"type": "string", "pattern": "^[0-9-]{10}$"}},
+        {"name": "half_days", "type": "integer", "nullable": false, "json_schema": {"type": "integer", "minimum": 1, "maximum": 1000}},
+        {"name": "reason", "type": "text", "nullable": false, "default": "", "max_length": 500},
+        {"name": "status", "type": "text", "nullable": false, "default": "pending", "max_length": 32, "json_schema": {"type": "string", "pattern": "^[a-z0-9_]{1,32}$"}},
+        {"name": "decided_on", "type": "text", "nullable": true, "max_length": 10, "json_schema": {"type": "string", "pattern": "^[0-9-]{10}$"}},
+        {"name": "decision_note", "type": "text", "nullable": true, "max_length": 500}
+      ]
+    },
+    {"op": "create_index", "table": "leave_requests", "name": "leave_requests_status", "columns": ["status"], "unique": false},
+    {
+      "op": "create_table",
+      "table": "claims",
+      "columns": [
+        {"name": "employee_id", "type": "text", "nullable": false, "max_length": 128, "json_schema": {"type": "string", "pattern": "^[A-Za-z0-9_-]{1,128}$"}},
+        {"name": "employee_name", "type": "text", "nullable": false, "max_length": 120},
+        {"name": "claim_date", "type": "text", "nullable": false, "max_length": 10, "json_schema": {"type": "string", "pattern": "^[0-9-]{10}$"}},
+        {"name": "category", "type": "text", "nullable": false, "default": "other", "max_length": 32, "json_schema": {"type": "string", "pattern": "^[a-z0-9_]{1,32}$"}},
+        {"name": "merchant", "type": "text", "nullable": false, "default": "", "max_length": 120},
+        {"name": "amount_minor", "type": "integer", "nullable": false, "json_schema": {"type": "integer", "minimum": 1, "maximum": 99999999999}},
+        {"name": "currency", "type": "text", "nullable": false, "max_length": 3, "json_schema": {"type": "string", "pattern": "^[A-Z]{3}$"}},
+        {"name": "description", "type": "text", "nullable": false, "default": "", "max_length": 500},
+        {"name": "receipt_ref", "type": "text", "nullable": true, "max_length": 200},
+        {"name": "status", "type": "text", "nullable": false, "default": "submitted", "max_length": 32, "json_schema": {"type": "string", "pattern": "^[a-z0-9_]{1,32}$"}},
+        {"name": "decided_on", "type": "text", "nullable": true, "max_length": 10, "json_schema": {"type": "string", "pattern": "^[0-9-]{10}$"}},
+        {"name": "decision_note", "type": "text", "nullable": true, "max_length": 500}
+      ]
+    },
+    {"op": "create_index", "table": "claims", "name": "claims_status", "columns": ["status"], "unique": false},
+    {
+      "op": "create_table",
+      "table": "job_openings",
+      "record_bytes": 32768,
+      "columns": [
+        {"name": "title", "type": "text", "nullable": false, "max_length": 120},
+        {"name": "department", "type": "text", "nullable": false, "default": "", "max_length": 80},
+        {"name": "description", "type": "text", "nullable": false, "default": "", "max_length": 8000},
+        {"name": "status", "type": "text", "nullable": false, "default": "draft", "max_length": 32, "json_schema": {"type": "string", "pattern": "^[a-z0-9_]{1,32}$"}}
+      ]
+    },
+    {
+      "op": "create_table",
+      "table": "candidates",
+      "record_bytes": 65536,
+      "columns": [
+        {"name": "opening_id", "type": "text", "nullable": false, "max_length": 128, "json_schema": {"type": "string", "pattern": "^[A-Za-z0-9_-]{1,128}$"}},
+        {"name": "display_name", "type": "text", "nullable": false, "max_length": 120},
+        {"name": "email", "type": "text", "nullable": true, "max_length": 254, "format": "email"},
+        {"name": "phone", "type": "text", "nullable": true, "max_length": 24, "format": "phone"},
+        {"name": "source", "type": "text", "nullable": false, "default": "", "max_length": 80},
+        {"name": "stage", "type": "text", "nullable": false, "default": "new", "max_length": 32, "json_schema": {"type": "string", "pattern": "^[a-z0-9_]{1,32}$"}},
+        {"name": "cv_text", "type": "text", "nullable": false, "default": "", "max_length": 12000},
+        {"name": "screening", "type": "json", "nullable": true, "json_schema": {"type": "object", "properties": {"summary": {"type": "string", "minLength": 1, "maxLength": 1000}, "reasons": {"type": "array", "minItems": 1, "maxItems": 20, "items": {"type": "string", "minLength": 1, "maxLength": 400}}}, "required": ["summary", "reasons"]}}
+      ]
+    }
+  ]
+}
