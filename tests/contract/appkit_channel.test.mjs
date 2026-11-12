@@ -70,7 +70,7 @@ async function mount(pushExtra = {}) {
   const channel = createChannel();
   channel.start();
   const ready = await waitFor(() => env.events.find((event) => event.op === "ready"), "ready");
-  expect(ready.accepts).toEqual(["screen.v2", "screen-records.v1", "crm-locale.v1"]);
+  expect(ready.accepts).toEqual(["screen.v2", "screen-records.v1", "screen-locale.v1"]);
   env.host().postMessage(push(pushExtra));
   await waitFor(() => getScope()?.scope.installId === "install-test", "PUSH scope");
   return { channel, ...env };
@@ -169,9 +169,13 @@ test("a verb outside the closed set, or one the host did not advertise, never re
   }
 });
 
-test("a push for another app, or with an unknown locale or route, is refused", async () => {
+test("a push for another app, or with an unknown locale or malformed route, is refused", async () => {
   clearScope("test reset");
-  const refusals = [{ tag: "crm" }, { presentation_locale: "zh-HK" }, { route: { section: "customers", view: "list", record_id: null, segment_id: null } }];
+  const refusals = [
+    { tag: "crm" },
+    { presentation_locale: "zh-HK" },
+    { route: { section: "people", view: "list", record_id: null, segment_id: null, extra: true } },
+  ];
   for (const bad of refusals) {
     const env = installEnvironment(bootFor("hr"));
     const channel = createChannel();
@@ -181,6 +185,14 @@ test("a push for another app, or with an unknown locale or route, is refused", a
     await new Promise((resolve) => setTimeout(resolve, 30));
     expect(getScope()).toBeNull();
     retire(channel);
+  }
+
+  // Unknown future host sections degrade safely to defaultSection ("people").
+  const safe = await mount({ route: { section: "customers", view: "list", record_id: null, segment_id: null } });
+  try {
+    expect(getScope()?.route.section).toBe("people");
+  } finally {
+    retire(safe.channel);
   }
 });
 

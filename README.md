@@ -18,8 +18,8 @@ bank account or medical information.
 
 Use the Node version in `screen-ui.lock.json` and the pnpm version in
 `package.json`. The shared screen UI archive is committed; the released app-kit
-receiver is vendored at `app-kit/` and pinned by `app-kit.lock.json` (toolchain
-release v0.3.22). No Cadence checkout is needed.
+receiver is vendored at `app-kit/` and pinned by `app-kit.lock.json`. No
+Cadence checkout is needed.
 
 ```sh
 pnpm install --frozen-lockfile

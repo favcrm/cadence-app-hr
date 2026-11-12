@@ -30,12 +30,9 @@ export function cleanArgs(verb: string, args: Bag): Bag {
   if (new TextEncoder().encode(JSON.stringify(value)).length > cap) throw new ApiError("The HR request exceeds its operation budget", 413);
   return value;
 }
-const writeListeners = new Set<() => void>();
-export const onWrite = (f: () => void) => { writeListeners.add(f); return () => { writeListeners.delete(f); }; };
-const written = () => writeListeners.forEach(f => f());
+export const WRITE_VERBS: readonly string[] = ["records.create", "records.update"];
+export const onWrite = (f: () => void) => channel.bridge.onWrite(f);
 export async function serviceCall<T = unknown, K extends keyof CallArgs = keyof CallArgs>(scope: DisplayScope, verb: K, args: CallArgs[K]): Promise<T> {
   assertCurrentScope(scope); requireOperation(verb);
-  const result = await channel.request(verb, cleanArgs(verb, args as Bag)) as T;
-  if (verb === "records.create" || verb === "records.update") written();
-  return result;
+  return channel.call<T>(scope, verb, cleanArgs(verb, args as Bag));
 }
