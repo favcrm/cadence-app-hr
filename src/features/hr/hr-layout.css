@@ -65,3 +65,16 @@
 .hr-nowrap { white-space: nowrap; }
 .hr-row-open { cursor: pointer; }
 .hr-row-open:hover { background: var(--color-ink-850); }
+
+/* Section tabs, status chips for the record tabs, long text and the screening reasons. */
+.hr-tabs { margin-bottom: 0.25rem; }
+.hr-subtabs { margin-bottom: 0.25rem; }
+.hr-filter { min-width: 9rem; }
+.hr .chip[data-status="pending"], .hr .chip[data-status="submitted"], .hr .chip[data-status="draft"], .hr .chip[data-status="new"] { color: var(--color-warn); }
+.hr .chip[data-status="approved"], .hr .chip[data-status="current"], .hr .chip[data-status="open"], .hr .chip[data-status="hired"], .hr .chip[data-status="paid"] { color: var(--color-ok); }
+.hr .chip[data-status="rejected"], .hr .chip[data-status="cancelled"], .hr .chip[data-status="retired"], .hr .chip[data-status="closed"] { color: var(--color-ink-400); }
+.hr-textarea { width: 100%; height: auto; min-height: 4.5rem; padding: 0.5rem 0.75rem; resize: vertical; line-height: 1.4; }
+.hr-prose { white-space: pre-wrap; overflow-wrap: anywhere; }
+.hr-reasons { margin: 0.4rem 0 0.4rem 1.1rem; padding: 0; list-style: disc; font-size: var(--text-secondary); color: var(--color-ink-200); overflow-wrap: anywhere; }
+.hr-tabs .btn, .hr-subtabs .btn { min-width: 0; }
+@media (max-width: 639px) { .hr-tabs { flex-wrap: nowrap; overflow-x: auto; } .hr-tabs .btn { flex: 0 0 auto; } }

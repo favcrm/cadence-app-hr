@@ -78,7 +78,9 @@ class Channel {
       error => {
         settle();
         const mapped = this.mapError(error);
-        if ([401, 403, 504, 502].includes(mapped.status)) this.retire(mapped);
+        // A 403 on a records call also answers a reader who may not read that table (owner-only
+        // tables), so it does not end the session; the scope guards still refuse a retired scope.
+        if ([401, 504, 502].includes(mapped.status) || (mapped.status === 403 && verb === "screen.route.patch")) this.retire(mapped);
         return Promise.reject(mapped);
       },
     );
