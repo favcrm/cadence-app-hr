@@ -9,7 +9,7 @@
     "typecheck": "tsc --noEmit",
     "build": "node scripts/build_screen.mjs",
     "verify": "node scripts/verify_screen.mjs",
-    "test": "bun test tests/unit/people.test.ts && bun test tests/unit/submit.test.ts && bun test tests/unit/storage.test.mjs && bun test tests/unit/records.test.ts && bun test tests/unit/write_schema.test.mjs && bun test tests/unit/skills.test.mjs && bun test tests/contract/appkit_channel.test.mjs && bun test tests/contract/screen_bundle.test.mjs && node --test tests/unit/publish-candidate.test.mjs"
+    "test": "bun test tests/unit/people.test.ts && bun test tests/unit/submit.test.ts && bun test tests/unit/storage.test.mjs && bun test tests/unit/records.test.ts && bun test tests/unit/write_schema.test.mjs && bun test tests/unit/skills.test.mjs && bun test tests/eval/eval.test.mjs && bun test tests/contract/appkit_channel.test.mjs && bun test tests/contract/screen_bundle.test.mjs && node --test tests/unit/publish-candidate.test.mjs"
   },
   "cadence": {
     "app": "hr",

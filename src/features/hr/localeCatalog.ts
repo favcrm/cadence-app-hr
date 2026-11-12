@@ -16,7 +16,7 @@ export const zhHK: Record<string, string> = {
   "Name": "姓名", "Employee number": "員工編號", "Job title": "職位", "Department": "部門",
   "Employment type": "僱傭類型", "Status": "狀態",
   "{count} employee on this page": "本頁有 {count} 位員工", "{count} employees on this page": "本頁有 {count} 位員工",
-  "{total} in total": "共 {total} 位", "Employee page": "員工名冊頁碼",
+  "{total} in total": "共 {total} 項", "Employee page": "員工名冊頁碼", "List page": "清單頁碼",
   "Page {page}": "第 {page} 頁", "Page {page} of {total}": "第 {page} 頁，共 {total} 頁", "Previous": "上一頁", "Next": "下一頁",
   "Full time": "全職", "Part time": "兼職", "Contract": "合約", "Intern": "實習",
   "Active": "在職", "On leave": "休假中", "Left": "已離職",

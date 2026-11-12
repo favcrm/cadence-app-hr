@@ -16,7 +16,7 @@ export default function ListPager({ page, pageCount, summary, onPrevious, onNext
       <span className="text-label text-ink-400" aria-live="polite">{summary}</span>
       <div className="hr-page-controls">
         <Button disabled={page === 0 || busy} onClick={onPrevious}>← {t("Previous")}</Button>
-        <span className="text-label text-ink-300" aria-label={t("Employee page")}>{label}</span>
+        <span className="text-label text-ink-300" aria-label={t("List page")}>{label}</span>
         <Button disabled={!hasNext || busy} onClick={onNext}>{t("Next")} →</Button>
       </div>
     </div>
