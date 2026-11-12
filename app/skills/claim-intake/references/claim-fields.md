@@ -14,3 +14,5 @@ All inside `profile` on `records.create` with `table: "claims"`.
 | `description` | short neutral text, up to 500 characters; no medical detail |
 | `receipt_ref` | the attached file's name, or empty |
 | `status` | `submitted` (the default; the host refuses anything else on create) |
+
+Leave `decided_on` and `decision_note` out: the owner's decision fills them, and the host refuses a create that carries either.

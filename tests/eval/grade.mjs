@@ -36,7 +36,9 @@ function createChecks(call, table, schema, openStatus) {
   if (call.args.table !== table) fails.push(`wrong table ${call.args.table}`);
   const status = profileOf(call).status;
   if (status !== undefined && status !== openStatus) fails.push(`staged status '${status}'`);
-  if (!valid(schema, { operation: "create", before: null, after: { status: status ?? openStatus }, provenance: null })) fails.push("refused by the write schema");
+  // The host checks the merged row: every column is present, and an omitted nullable column is null.
+  const after = { decided_on: null, decision_note: null, ...profileOf(call), status: status ?? openStatus };
+  if (!valid(schema, { operation: "create", before: null, after, provenance: null })) fails.push("refused by the write schema");
   return fails;
 }
 const textOf = (profile) => Object.values(profile).filter((v) => typeof v === "string").join(" ");

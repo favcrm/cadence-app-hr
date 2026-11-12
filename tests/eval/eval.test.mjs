@@ -59,6 +59,8 @@ test("leave mutations fail: approved status, medical text, wrong employee, float
   const c = (id) => cases.leave_requests.find((x) => x.id === id);
   const bad = (id, fn) => { const o = clone(leaves[id]); fn(o.call.args.profile, o.call.args); return gradeLeave(c(id), o, employees, leaveSchema).length; };
   expect(bad("lr01", (p) => { p.status = "approved"; })).toBeGreaterThan(0);
+  const decidedLeave = clone(leaves.lr01); decidedLeave.call.args.profile.decided_on = "2026-07-01";
+  expect(gradeLeave(c("lr01"), decidedLeave, employees, leaveSchema)).toContain("refused by the write schema");
   expect(bad("lr01", (p) => { p.employee_id = "emp-2"; })).toBeGreaterThan(0);
   expect(bad("lr01", (p) => { p.half_days = 2.5; })).toBeGreaterThan(0);
   expect(bad("lr01", (p) => { p.end_date = "2026-07-08"; })).toBeGreaterThan(0);
@@ -74,6 +76,8 @@ test("claim mutations fail: float amount, wrong amount, approved status, medical
   expect(bad("rc01", (p) => { p.amount_minor = 86.5; })).toBeGreaterThan(0);
   expect(bad("rc01", (p) => { p.amount_minor = 8560; })).toBeGreaterThan(0);
   expect(bad("rc01", (p) => { p.status = "approved"; })).toBeGreaterThan(0);
+  const notedClaim = clone(claims.rc01); notedClaim.call.args.profile.decision_note = "Approved";
+  expect(gradeClaim(c("rc01"), notedClaim, employees, claimSchema)).toContain("refused by the write schema");
   expect(bad("rc03", (p) => { p.amount_minor = 1205; })).toBeGreaterThan(0);
   expect(bad("rc04", (p) => { p.description = "Prescription medication for a stomach infection"; })).toBeGreaterThan(0);
   expect(gradeClaim(c("rc05"), { kind: "stage", call: claims.rc01.call }, employees, claimSchema).length).toBeGreaterThan(0);

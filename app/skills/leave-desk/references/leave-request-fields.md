@@ -12,4 +12,4 @@ All inside `profile` on `records.create` with `table: "leave_requests"`.
 | `reason` | short neutral text, or empty; no medical detail |
 | `status` | `pending` (the default; the host refuses anything else on create) |
 
-Leave `decided_on` and `decision_note` out: the owner's decision fills them.
+Leave `decided_on` and `decision_note` out: the owner's decision fills them, and the host refuses a create that carries either.

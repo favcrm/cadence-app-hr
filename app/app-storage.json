@@ -97,6 +97,12 @@
                   "properties": {
                     "status": {
                       "const": "pending"
+                    },
+                    "decided_on": {
+                      "type": "null"
+                    },
+                    "decision_note": {
+                      "type": "null"
                     }
                   }
                 }
@@ -159,8 +165,7 @@
                 "enum": [
                   "submitted",
                   "approved",
-                  "rejected",
-                  "paid"
+                  "rejected"
                 ]
               }
             },
@@ -191,6 +196,12 @@
                   "properties": {
                     "status": {
                       "const": "submitted"
+                    },
+                    "decided_on": {
+                      "type": "null"
+                    },
+                    "decision_note": {
+                      "type": "null"
                     }
                   }
                 }

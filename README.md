@@ -103,11 +103,17 @@ Migration `002-hr-records.json` adds six tables. The host has no alter-column op
   always carries reasons. `leave_types.accrual_rule` is JSON with no declared shape (release 0.3.0 defines it).
 - A policy change is a new row plus a `retired` mark on the old one: a record's journal keeps 64 revisions.
 
-Write rules (`tables.leave_requests.write_schema`, `tables.claims.write_schema`): a create can only be open
-(`pending` / `submitted`), and an update is refused unless the record is still open. JSON Schema cannot compare two
-fields, so "an approved claim's amount cannot change" is enforced by freezing the whole decided claim. This also
-refuses `approved` to `paid`; release 0.4.0 must change the rule (a new descriptor version) before it can mark a claim
-paid. The host reports a refused write as status 400, which the board shows as `failed`: the screen says the record
+Write rules (`tables.leave_requests.write_schema`, `tables.claims.write_schema`) are not migrations: they change with
+the descriptor version, so they are not permanent decisions. In 0.2.0:
+
+- A create can only be open (`pending` / `submitted`) and must leave `decided_on` and `decision_note` null.
+- An update is refused unless the stored record is still open. The rule sees the stored row (`before`) and the merged
+  row (`after`) but cannot compare a field across them, so "an approved claim's amount cannot change" is enforced by
+  freezing the whole decided claim.
+- A claim's status can only be `submitted`, `approved` or `rejected`. Nothing in 0.2.0 (rule, screen or skill) can
+  mark a claim paid; `paid` returns with payroll in 0.4.0, which must change the rule first.
+
+The host reports a refused write as status 400, which the board shows as `failed`: the screen says the record
 "may already be decided" and offers a reload instead of claiming a cause.
 
 Owner-only reads: every table, including `employees` (declared through the `tables` map), carries
