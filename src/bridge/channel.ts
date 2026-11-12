@@ -8,7 +8,7 @@ import {
   type ScreenReceiver,
 } from "@cadence/app-kit";
 import { acceptPush, clearScope } from "./scope";
-import { OPERATIONS } from "./services";
+import { OPERATIONS, WRITE_BUDGET } from "./services";
 
 const MAX_PUSH_BYTES = 131072;
 const MAX_DATA_BYTES = 1048576;
@@ -46,6 +46,9 @@ class Channel {
       boot: boot as unknown as ScreenBoot,
       accepts: ["screen.v2", "screen-records.v1", "crm-locale.v1"],
       timeoutMs: 65000,
+      // The largest per-operation budget (a record write); `cleanArgs` holds every other operation to 16 KiB.
+      // Without it the receiver keeps its 16 KiB default and refuses a long policy or CV.
+      maxArgsBytes: WRITE_BUDGET,
       onPush: (push) => {
         if (bytes(push) > MAX_PUSH_BYTES) throw invalid();
         acceptPush(push);

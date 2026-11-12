@@ -326,3 +326,92 @@ test("the zh-HK catalogue covers every label, hint, option, message and refusal 
   const missing = [...strings].filter((s) => s !== "—" && !(s in zhHK));
   expect(missing).toEqual([]);
 });
+
+// ---- argument budgets ---------------------------------------------------------------------------
+// The board shell closes a records frame whose `records.create` / `records.update` arguments pass 49,152 bytes of
+// JSON, and any other operation's past 16,384. The screen refuses first, before anything is sent.
+const B = await import("../../src/bridge/services.ts");
+const json = (v: unknown) => new TextEncoder().encode(JSON.stringify(v)).length;
+/** The host call the screen makes: `serviceCall` checks the arguments with `cleanArgs` before it sends them. */
+function budgeted() {
+  const sent: Call[] = [];
+  const actions = createHostActions(async (_s, verb, args) => {
+    sent.push({ verb, args: B.cleanArgs(verb, args as Record<string, unknown>) });
+    return rec("pol-1", {});
+  });
+  return { actions, sent };
+}
+/** Written Chinese with punctuation and line breaks, `n` characters long (3 bytes each in UTF-8, a line break 2 in JSON). */
+const chinese = (n: number) => Array.from("本公司員工每年可享有十四日有薪年假，並須於兩星期前向主管提出申請。\n".repeat(Math.ceil(n / 30))).slice(0, n).join("");
+const longPolicy = (body: string) => ({ title: chinese(120), category: "leave", language: "zh-HK", effectiveFrom: "2026-01-01", status: "current", body });
+
+test("a record write may carry 49,152 bytes of arguments, and every other operation 16,384", () => {
+  const padField = (verb: string) => (verb === "records.list" ? "query" : "record_id");
+  const base: Record<string, Record<string, unknown>> = {
+    "records.create": { table: "policies", record_id: "", profile: {} },
+    "records.update": { table: "policies", record_id: "", expected_revision: 1, profile: {} },
+    "records.list": { table: "policies", query: "" },
+    "records.show": { table: "policies", record_id: "" },
+    "screen.route.patch": { section: "policies", record_id: "" },
+  };
+  const sized = (verb: string, size: number) => {
+    const args = { ...base[verb] };
+    args[padField(verb)] = "x".repeat(size - json(args));
+    expect(json(args)).toBe(size);
+    return args;
+  };
+  expect(Object.keys(base).sort()).toEqual([...B.OPERATIONS].sort());
+  for (const verb of B.OPERATIONS) {
+    const budget = verb === "records.create" || verb === "records.update" ? 49152 : 16384;
+    expect(B.requestBudget(verb)).toBe(budget);
+    expect(() => B.cleanArgs(verb, sized(verb, budget))).not.toThrow();
+    let refused: unknown = null;
+    try { B.cleanArgs(verb, sized(verb, budget + 1)); } catch (e) { refused = e; }
+    expect(refused).toMatchObject({ status: 413, code: "too_large" });
+  }
+});
+
+test("a 12,000-character Chinese policy body or CV fits a record write, though it is larger than 16 KiB", async () => {
+  const policy = budgeted();
+  await S.createRecord(scope, R.POLICY, "pol-0123456789ab", longPolicy(chinese(12000)), {}, policy.actions);
+  expect(policy.sent.map((c) => c.verb)).toEqual(["records.create"]);
+  expect((policy.sent[0]!.args.profile as Record<string, unknown>).body).toBe(chinese(12000));
+  expect(json(policy.sent[0]!.args)).toBeGreaterThan(16384);
+  expect(json(policy.sent[0]!.args)).toBeLessThanOrEqual(49152);
+  // An edit that replaces the whole body is sent too.
+  const stored = row("pol-1", policy.sent[0]!.args.profile as Record<string, unknown>, 3);
+  const edit = budgeted();
+  await S.updateRecord(scope, R.POLICY, stored, { ...R.viewValues(R.POLICY, stored.profile), body: chinese(11999) + "。" }, edit.actions);
+  expect(edit.sent.map((c) => c.verb)).toEqual(["records.update"]);
+  expect(json(edit.sent[0]!.args)).toBeGreaterThan(16384);
+  const cv = budgeted();
+  const candidate = { displayName: chinese(120), email: "applicant@example.invalid", phone: "+852 5555 0100", source: chinese(80), cvText: chinese(12000) };
+  await S.createRecord(scope, R.CANDIDATE, "cand-0123456789ab", candidate, { opening_id: "job-0123456789ab" }, cv.actions);
+  expect(cv.sent.map((c) => c.verb)).toEqual(["records.create"]);
+  expect(json(cv.sent[0]!.args)).toBeGreaterThan(16384);
+  expect(json(cv.sent[0]!.args)).toBeLessThanOrEqual(49152);
+});
+
+test("a write over 49,152 bytes is refused in the screen with a plain 'too long' message, and nothing is sent", async () => {
+  const { zhHK } = await import("../../src/features/hr/localeCatalog.ts");
+  // Pasted text keeps Word's manual line breaks (U+000B), which JSON writes as six bytes each: 12,000 characters
+  // pass the form's own length check but not the write budget.
+  const pasted = Array.from(chinese(6000)).map((c) => c + "\u000b").join("");
+  expect(Array.from(pasted).length).toBe(12000);
+  const create = budgeted();
+  const error = await S.createRecord(scope, R.POLICY, "pol-0123456789ab", longPolicy(pasted), {}, create.actions).catch((e: unknown) => e);
+  expect(create.sent).toEqual([]);
+  const identity = (s: string) => s;
+  expect(S.problemFor(error, "create", identity)).toEqual({ field: null, message: S.TEXT.too_long, kind: "too_long", reload: false });
+  expect(S.TEXT.too_long).toMatch(/too long/);
+  expect(S.problemFor(error, "create", (m) => zhHK[m] ?? m).message).toBe("文字太長，無法在此畫面儲存。請先縮短，然後再儲存。");
+  // The same on an edit.
+  const stored = row("pol-1", R.buildProfile(R.POLICY, longPolicy(chinese(100))), 2);
+  const edit = budgeted();
+  const editError = await S.updateRecord(scope, R.POLICY, stored, { ...R.viewValues(R.POLICY, stored.profile), body: pasted }, edit.actions).catch((e: unknown) => e);
+  expect(edit.sent).toEqual([]);
+  expect(S.problemFor(editError, "update", identity)).toMatchObject({ kind: "too_long", message: S.TEXT.too_long, reload: false });
+  // Only the screen's own refusal reads as "too long": the board shows a host 413 as 400 `failed`.
+  expect(R.classify({ status: 413 }, "create")).toBe("neutral");
+  expect(R.classify({ status: 400, code: "failed" }, "create")).toBe("rejected");
+});

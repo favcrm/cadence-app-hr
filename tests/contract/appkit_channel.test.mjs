@@ -189,3 +189,61 @@ test("a boot declared for another app never mounts", () => {
   installEnvironment(bootFor("crm"));
   expect(() => createChannel().start()).toThrow();
 });
+
+// ---- argument budgets ---------------------------------------------------------------------------
+// The board closes a records frame whose write arguments pass 49,152 bytes of JSON (16,384 for any other operation).
+const json = (value) => new TextEncoder().encode(JSON.stringify(value)).length;
+const policyArgs = (body) => ({ table: "policies", record_id: "pol-0123456789ab", profile: { title: "請假政策", category: "leave", language: "zh-HK", effective_from: "2026-01-01", status: "current", body } });
+const exactly = (size) => { const args = policyArgs(""); args.profile.body = "x".repeat(size - json(args)); return args; };
+const chinese = (n) => "員工每年可享有十四日有薪年假。".repeat(Math.ceil(n / 15)).slice(0, n);
+
+test("the receiver sends a record write of up to 49,152 bytes, the board's limit, and nothing larger", async () => {
+  const { channel, events, host } = await mount();
+  try {
+    const pending = channel.request("records.create", exactly(49152));
+    const request = await waitFor(() => events.find((event) => event.op === "call"), "call");
+    expect(request.verb).toBe("records.create");
+    expect(json(request.args)).toBe(49152);
+    host().postMessage({ v: 2, op: "reply", id: request.id, ok: true, data: { record: { id: "pol-0123456789ab", revision: 1 } } });
+    await expect(pending).resolves.toMatchObject({ record: { id: "pol-0123456789ab" } });
+    // One byte more never leaves the frame. The screen does not ask: `cleanArgs` refuses it first (next test).
+    await expect(channel.request("records.create", exactly(49153))).rejects.toMatchObject({ status: 502 });
+    expect(events.filter((event) => event.op === "call").length).toBe(1);
+  } finally {
+    retire(channel);
+  }
+});
+
+test("the screen refuses an oversized write before sending it, says it is too long, and keeps the mount", async () => {
+  // Every screen call goes through the module's own channel, so mount that one.
+  const { channel: screen } = await import("../../src/bridge/channel.ts");
+  const { createRecord, problemFor, TEXT } = await import("../../src/features/hr/recordsSubmit.ts");
+  const { POLICY } = await import("../../src/domain/records.ts");
+  clearScope("test reset");
+  const env = installEnvironment(bootFor("hr"));
+  screen.start();
+  await waitFor(() => env.events.find((event) => event.op === "ready"), "ready");
+  env.host().postMessage(push());
+  await waitFor(() => getScope()?.scope.installId === "install-test", "PUSH scope");
+  const calls = () => env.events.filter((event) => event.op === "call");
+  const form = (body) => ({ title: "請假政策", category: "leave", language: "zh-HK", effectiveFrom: "2026-01-01", status: "current", body });
+  try {
+    const scope = getScope().scope;
+    // 12,000 characters that keep Word's manual line breaks: JSON writes each U+000B as six bytes.
+    const pasted = chinese(6000).split("").map((c) => c + "\u000b").join("");
+    const error = await createRecord(scope, POLICY, "pol-0123456789ab", form(pasted)).catch((e) => e);
+    expect(problemFor(error, "create", (s) => s)).toMatchObject({ kind: "too_long", message: TEXT.too_long, reload: false });
+    expect(calls()).toEqual([]);
+    expect(getScope()).not.toBeNull();
+    // The mount is still live: the same form with a 12,000-character Chinese body is sent and saved.
+    const pending = createRecord(scope, POLICY, "pol-0123456789ab", form(chinese(12000)));
+    const request = await waitFor(() => calls()[0], "call");
+    expect(request.verb).toBe("records.create");
+    expect(request.args.profile.body).toBe(chinese(12000));
+    expect(json(request.args)).toBeGreaterThan(16384);
+    env.host().postMessage({ v: 2, op: "reply", id: request.id, ok: true, data: { record: { id: "pol-0123456789ab", revision: 1, digest: "sha256:x", profile: request.args.profile, history: [] } } });
+    await expect(pending).resolves.toMatchObject({ id: "pol-0123456789ab", revision: 1 });
+  } finally {
+    retire(screen);
+  }
+});
