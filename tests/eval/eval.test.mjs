@@ -1,5 +1,5 @@
-// The evaluation set's deterministic checks. Golden outputs must pass; every mutation must fail, so a grader that
-// passes everything is caught. No model is called. Run: bun test tests/eval/eval.test.mjs
+// The evaluation set's deterministic checks. The graders judge recorded outputs: golden outputs must pass, and every
+// mutation must fail, so a grader that passes everything is caught. No model is run. Run: bun test tests/eval/eval.test.mjs
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -19,6 +19,10 @@ test("the set has the planned size, and every case has a golden output", () => {
   expect(cases.receipts.length).toBe(5);
   expect(cases.cvs.length).toBe(5);
   expect(cases.policy_questions.filter((c) => c.expect.kind === "decline").length).toBeGreaterThanOrEqual(4);
+  for (const c of cases.policy_questions) {
+    if (c.expect.kind === "answer") expect([c.id, Array.isArray(c.expect.figures)]).toEqual([c.id, true]);
+    else expect([c.id, c.expect.forbid.length > 0]).toEqual([c.id, true]);
+  }
   for (const c of cases.policy_questions) expect(answers[c.id]).toBeDefined();
   for (const c of cases.leave_requests) expect(leaves[c.id]).toBeDefined();
   for (const c of cases.receipts) expect(claims[c.id]).toBeDefined();
@@ -51,8 +55,33 @@ test("policy mutations fail: wrong date, missing title, answering when it must d
   expect(gradePolicyAnswer(q("pq09"), `12 weeks. ${"Source: Parental leave (sample) (effective 2026-09-01)"}`, policies, today).length).toBeGreaterThan(0);
   expect(gradePolicyAnswer(q("pq10"), "Smart casual is usual.", policies, today).length).toBeGreaterThan(0);
   // A future-dated policy is not citable as an answer even with title and date.
-  const future = { id: "x", question: "q", expect: { kind: "answer", title: "Parental leave (sample)", effective_from: "2026-09-01", must_include: ["12"] } };
+  const future = { id: "x", question: "q", expect: { kind: "answer", title: "Parental leave (sample)", effective_from: "2026-09-01", must_include: ["weeks"], figures: ["12"] } };
   expect(gradePolicyAnswer(future, "12 weeks. Source: Parental leave (sample) (effective 2026-09-01)", policies, today)).toContain("cited policy is not in force");
+});
+
+// The review's counter-examples, reconstructed from its description (its exact texts were not available). Each one
+// declines or cites correctly and has no stray Source line, so it passed the earlier grader; each must fail now.
+test("an answer whose figure is wrong fails even when the right figure also appears", () => {
+  const q = (id) => cases.policy_questions.find((c) => c.id === id);
+  const grade = (id, text) => gradePolicyAnswer(q(id), text, policies, today);
+  expect(grade("pq01", "Full-time staff get 20 days of annual leave (the policy says 15). Source: Annual leave (sample) (effective 2026-01-01)")).toContain("answer states '20', which is not the policy's figure");
+  expect(grade("pq03", "A meal claim is capped at 300 per day, or 200 for junior staff. Source: Meal claims (sample) (effective 2026-02-01)")).toContain("answer states '300', which is not the policy's figure");
+  expect(grade("pq05", "Core hours are 09:00 to 16:00; the policy also mentions 10:00. Source: Working hours (sample) (effective 2026-01-01)")).toContain("answer states '09:00', which is not the policy's figure");
+  expect(grade("pq06", "全職員工每年有二十日年假（政策寫十五日）。 Source: 年假政策（樣本） (effective 2026-01-01)")).toContain("answer states '二十', which is not the policy's figure");
+  expect(grade("pq04", "The medical benefit covers two general check-ups per year. Source: Medical benefit (sample) (effective 2025-07-01)")).toContain("answer does not state the figure 'one'");
+  // The figure check does not count the citation's own date.
+  expect(grade("pq01", answers.pq01)).toEqual([]);
+});
+
+test("a decline that states the policy's substance fails, and keeps its decline marker requirement", () => {
+  const q = (id) => cases.policy_questions.find((c) => c.id === id);
+  const grade = (id, text) => gradePolicyAnswer(q(id), text, policies, today);
+  expect(grade("pq07", "No current policy covers taxi fares, but under the retired rule they were reimbursed in full.")).toContain("a decline states the substance 'in full'");
+  expect(grade("pq08", "No current policy covers this yet; the draft lets staff work from home on Fridays.")).toContain("a decline states the substance 'friday'");
+  expect(grade("pq09", "No current policy in force covers parental leave yet: from 2026-09-01 it gives twelve weeks.")).toContain("a decline states the substance 'twelve'");
+  expect(grade("pq09", "No current policy in force covers it yet; it will be 12 weeks.")).toContain("a decline states the substance '12 week'");
+  expect(grade("pq10", "No current policy covers the dress code, so smart casual is the usual standard.")).toContain("a decline states the substance 'smart casual'");
+  expect(grade("pq10", "Wear what you like.")).toContain("does not decline");
 });
 
 test("leave mutations fail: approved status, medical text, wrong employee, float days, wrong dates", () => {
