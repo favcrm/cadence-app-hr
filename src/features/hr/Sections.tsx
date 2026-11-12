@@ -2,9 +2,13 @@ import { Button, Select } from "@cadence/screen-ui";
 import { useMemo, useState } from "react";
 import { parseRecordList, type HostScope } from "./hostActions";
 import { useLocale } from "./locale";
+import { listArgs } from "./recordQueries";
 import RecordsPane from "./RecordsPane";
 import { useHrQuery } from "./resources";
 import { candidatesView, claimsView, leaveRequestsView, leaveTypesView, openingsView, policiesView } from "./views";
+
+/** Every opening's title, for the candidates' opening filter (one page of up to 100). */
+const OPENING_TITLES = listArgs(openingsView, { status: "all", query: "", limit: 100 });
 
 export interface PaneProps { scope: HostScope; canWrite: boolean; recordId: string | null; onSelect: (id: string) => void; onClose: () => void }
 
@@ -37,7 +41,7 @@ export function RecruitingTab(p: PaneProps) {
   const { t } = useLocale();
   const [list, setList] = useState<0 | 1>(0);
   const [opening, setOpening] = useState("all");
-  const openings = useHrQuery(p.scope, "records.list", { table: "job_openings", limit: 100, order_by: { field: "created_at", direction: "desc" as const } }, parseRecordList);
+  const openings = useHrQuery(p.scope, "records.list", OPENING_TITLES, parseRecordList);
   const rows = openings.data?.records;
   const titles = useMemo(() => Object.fromEntries((rows ?? []).map((r) => [r.id, String((r.profile as { title?: unknown } | null)?.title ?? "—")])), [rows]);
   const view = useMemo(() => candidatesView(opening === "all" ? null : opening, titles), [opening, titles]);

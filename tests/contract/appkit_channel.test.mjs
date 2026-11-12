@@ -117,6 +117,20 @@ test("an authorization refusal retires the mount and clears scope", async () => 
   }
 });
 
+test("a forbidden refusal on a records call retires the mount and clears scope, as the board does", async () => {
+  const { channel, events, host } = await mount();
+  try {
+    const pending = channel.request("records.list", { table: "claims" });
+    const request = await waitFor(() => events.find((event) => event.op === "call"), "call");
+    host().postMessage({ v: 2, op: "reply", id: request.id, ok: false, refusal: { code: "forbidden", text: "not for this member" } });
+    await expect(pending).rejects.toMatchObject({ status: 403, code: "forbidden" });
+    expect(getScope()).toBeNull();
+    await expect(channel.request("records.list", {})).rejects.toMatchObject({ status: 503 });
+  } finally {
+    retire(channel);
+  }
+});
+
 test("caps in-flight requests at eight", async () => {
   const { channel } = await mount();
   const pending = [];

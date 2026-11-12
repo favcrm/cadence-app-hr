@@ -24,6 +24,8 @@ export interface Field {
   hint?: string;
   /** For `money`: the form key of the currency field. */
   currencyKey?: string;
+  /** Set once when the record is made: an edit neither shows nor sends it (a join key such as a leave type code). */
+  fixed?: boolean;
 }
 export interface TableSpec { table: string; noun: string; fields: readonly Field[] }
 export type Values = Record<string, string>;
@@ -50,7 +52,7 @@ export const POLICY: TableSpec = { table: "policies", noun: "policy", fields: [
   { key: "body", column: "body", label: "Policy text", kind: "longtext", required: true, max: 12000 },
 ] };
 export const LEAVE_TYPE: TableSpec = { table: "leave_types", noun: "leave type", fields: [
-  { key: "code", column: "code", label: "Code", kind: "ucode", required: true, max: 32, hint: "Unique. Capitals, digits, - and _" },
+  { key: "code", column: "code", label: "Code", kind: "ucode", required: true, max: 32, fixed: true, hint: "Unique, and cannot be changed once saved. Capitals, digits, - and _" },
   { key: "name", column: "name", label: "Name", kind: "text", required: true, max: 80 },
   { key: "paid", column: "paid", label: "Paid leave", kind: "code", options: ["yes", "no"] },
 ] };
@@ -87,11 +89,13 @@ export const CANDIDATE: TableSpec = { table: "candidates", noun: "candidate", fi
 ] };
 
 // ---- amounts and days -------------------------------------------------------------------------
+// Minor-unit exponents (ISO 4217) that differ from the usual two decimals.
 const ZERO_DECIMAL = new Set(["JPY", "KRW", "VND", "ISK", "CLP"]);
-const exponent = (currency: string) => (ZERO_DECIMAL.has(currency) ? 0 : 2);
+const THREE_DECIMAL = new Set(["KWD", "BHD", "OMR", "JOD", "TND", "IQD", "LYD"]);
+const exponent = (currency: string) => (ZERO_DECIMAL.has(currency) ? 0 : THREE_DECIMAL.has(currency) ? 3 : 2);
 export const MAX_MINOR = 99999999999;
 
-/** "12.50" in a two-decimal currency is 1250. Refuses anything that is not an exact amount. */
+/** "12.50" in a two-decimal currency is 1250; "1.234" KWD is 1234. Refuses anything that is not an exact amount. */
 export function toMinor(text: string, currency: string): number | null {
   const digits = exponent(currency);
   const m = new RegExp(`^(\\d{1,12})(?:\\.(\\d{1,${Math.max(digits, 1)}}))?$`).exec(text.trim());
@@ -101,7 +105,9 @@ export function toMinor(text: string, currency: string): number | null {
 }
 export function fromMinor(minor: number, currency: string): string {
   const digits = exponent(currency);
-  return digits === 0 ? String(minor) : `${Math.trunc(minor / 100)}.${String(minor % 100).padStart(2, "0")}`;
+  if (digits === 0) return String(minor);
+  const unit = 10 ** digits;
+  return `${Math.trunc(minor / unit)}.${String(minor % unit).padStart(digits, "0")}`;
 }
 /** "1.5" days is 3 half days. Only whole and half days are accepted. */
 export function toHalfDays(text: string): number | null {
@@ -118,8 +124,8 @@ export function inclusiveDays(start: string, end: string): number | null {
 }
 
 // ---- form <-> profile -------------------------------------------------------------------------
-/** The fields an edit shows: a form-only lookup (the employee) is fixed once the record exists. */
-export const editable = (spec: TableSpec): TableSpec => ({ ...spec, fields: spec.fields.filter((f) => f.kind !== "lookup") });
+/** The fields an edit shows and sends: a form-only lookup (the employee) and a `fixed` field are set once at creation. */
+export const editable = (spec: TableSpec): TableSpec => ({ ...spec, fields: spec.fields.filter((f) => f.kind !== "lookup" && !f.fixed) });
 export const emptyValues = (spec: TableSpec): Values => Object.fromEntries(spec.fields.map((f) => [f.key, f.kind === "code" ? f.options![0]! : f.key === "currency" ? "HKD" : f.key === "language" ? "en" : ""]));
 
 const SHAPE: Record<string, RegExp> = { email: /^[^\s@]+@[^\s@.]+(\.[^\s@.]+)+$/ };
@@ -156,10 +162,12 @@ export function buildProfile(spec: TableSpec, values: Values): Record<string, st
   }
   return out;
 }
-/** Cross-field rules a single field cannot see. */
+/** Cross-field rules a single field cannot see: the span runs forwards, and its days fit inside it (two half days per calendar day). */
 export function checkRequestDates(values: Values): void {
   const start = values.startDate!.trim(), end = values.endDate!.trim();
   if (end < start) throw new FormError("endDate", "The last day cannot be before the first day.");
+  const span = inclusiveDays(start, end), half = toHalfDays(values.days ?? "");
+  if (span !== null && half !== null && half > span * 2) throw new FormError("days", "The days of leave cannot be more than the calendar days from the first to the last day.");
 }
 
 export function viewValues(spec: TableSpec, profile: unknown): Values {
@@ -238,7 +246,8 @@ export async function assertLeaveTypeExists(list: ListFn, code: string): Promise
     throw new FormError("leaveType", "No leave type has that code. Add it under Leave types first.");
 }
 export const DUPLICATE_CODE_TEXT = "That code is already used by another leave type. Pick a different code or open the existing one.";
-export async function assertLeaveCodeFree(list: ListFn, code: string, ownId: string | null): Promise<void> {
+/** `ownId` is the new form's own record id: after a lost reply, a retry must not call its own row a duplicate. */
+export async function assertLeaveCodeFree(list: ListFn, code: string, ownId: string): Promise<void> {
   const rows = await findExact(list, "leave_types", "code", code.trim().toUpperCase());
   if (rows.some((r) => r.id !== ownId)) throw new FormError("code", DUPLICATE_CODE_TEXT);
 }

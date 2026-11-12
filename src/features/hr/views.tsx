@@ -1,7 +1,8 @@
 import {
   CANDIDATE, CLAIM, CLAIM_OPEN, fromHalfDays, fromMinor, LEAVE_OPEN, LEAVE_REQUEST, LEAVE_TYPE, OPENING, OPENING_STATUSES, POLICY, POLICY_STATUSES, STAGES,
 } from "../../domain/records";
-import { chip, type View } from "./RecordsPane";
+import { chip } from "./chip";
+import type { View } from "./RecordsPane";
 
 const s = (v: unknown) => (typeof v === "string" && v !== "" ? v : "—");
 const n = (v: unknown) => (Number.isSafeInteger(v) ? (v as number) : null);
@@ -43,7 +44,8 @@ export const leaveTypesView: View = {
 };
 export const claimsView: View = {
   id: "claims", title: "Claims", spec: CLAIM, newLabel: "Add claim", searchHint: "Search claims…", kind: "decision", open: CLAIM_OPEN, newId: "cl",
-  filter: { field: "status", values: ["submitted", "approved", "rejected", "paid"], initial: CLAIM_OPEN },
+  // No `paid`: 0.2.0 cannot write it (the write rule refuses it); it returns with payroll in 0.4.0.
+  filter: { field: "status", values: ["submitted", "approved", "rejected"], initial: CLAIM_OPEN },
   columns: (p, t) => {
     const minor = n(p.amount_minor);
     return [

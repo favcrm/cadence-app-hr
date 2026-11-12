@@ -42,6 +42,19 @@ test("money is exact integer minor units and refuses anything inexact", () => {
   expect(R.fromMinor(1205, "HKD")).toBe("12.05");
 });
 
+test("three-decimal currencies keep their third decimal, and a stored amount reads back unchanged", () => {
+  for (const cur of ["KWD", "BHD", "OMR", "JOD", "TND", "IQD", "LYD"]) expect([cur, R.toMinor("1.234", cur)]).toEqual([cur, 1234]);
+  expect(R.toMinor("1.5", "KWD")).toBe(1500);
+  expect(R.toMinor("12.50", "KWD")).toBe(12500);
+  expect(R.toMinor("1.2345", "KWD")).toBeNull();
+  expect(R.fromMinor(1234, "KWD")).toBe("1.234");
+  expect(R.fromMinor(5, "BHD")).toBe("0.005");
+  const stored = { claim_date: "2026-03-02", category: "meals", merchant: "Sample Cafe", amount_minor: 12345, currency: "KWD", description: "", receipt_ref: null };
+  const values = R.viewValues(R.CLAIM, stored);
+  expect(values.amount).toBe("12.345");
+  expect(R.changedFields(stored, R.buildProfile(R.editable(R.CLAIM), values))).toEqual({});
+});
+
 test("leave is whole or half days stored as half days", () => {
   expect(R.toHalfDays("1")).toBe(2);
   expect(R.toHalfDays("1.5")).toBe(3);
@@ -62,6 +75,30 @@ test("a leave request profile carries half days, a capitalised type code and no 
   expect(() => R.buildProfile(R.LEAVE_REQUEST, { ...leaveForm, days: "1.2" })).toThrow(R.FormError);
   expect(() => R.checkRequestDates({ ...leaveForm, endDate: "2026-03-01" })).toThrow(R.FormError);
   expect(() => R.buildProfile(R.LEAVE_REQUEST, { ...leaveForm, leaveType: "an nual" })).toThrow(R.FormError);
+});
+
+test("the days of leave fit inside the span: at most two half days per calendar day, inclusive", () => {
+  const span = (startDate: string, endDate: string, days: string) => () => R.checkRequestDates({ ...leaveForm, startDate, endDate, days });
+  expect(span("2026-03-02", "2026-03-03", "2")).not.toThrow();
+  expect(span("2026-03-02", "2026-03-03", "1.5")).not.toThrow();
+  expect(span("2026-03-02", "2026-03-02", "1")).not.toThrow();
+  expect(span("2026-03-02", "2026-03-02", "0.5")).not.toThrow();
+  expect(span("2026-02-27", "2026-03-02", "4")).not.toThrow();
+  let error: unknown = null;
+  try { span("2026-03-02", "2026-03-03", "2.5")(); } catch (e) { error = e; }
+  expect(error).toMatchObject({ field: "days", message: "The days of leave cannot be more than the calendar days from the first to the last day." });
+  expect(span("2026-03-02", "2026-03-02", "1.5")).toThrow(R.FormError);
+  expect(span("2026-02-27", "2026-03-02", "4.5")).toThrow(R.FormError);
+});
+
+test("a leave request whose days exceed its span is refused before any call, on create and on edit", async () => {
+  const create = fake([]);
+  await expect(S.createRecord(scope, R.LEAVE_REQUEST, "lv-abc", { ...leaveForm, days: "3" }, {}, create.actions)).rejects.toMatchObject({ field: "days" });
+  expect(create.calls).toEqual([]);
+  const record = row("lv-1", { leave_type: "ANNUAL", start_date: "2026-03-02", end_date: "2026-03-03", half_days: 4, reason: "", status: "pending" }, 2);
+  const edit = fake([]);
+  await expect(S.updateRecord(scope, R.LEAVE_REQUEST, record, { ...R.viewValues(R.LEAVE_REQUEST, record.profile), days: "2.5" }, edit.actions)).rejects.toMatchObject({ field: "days" });
+  expect(edit.calls).toEqual([]);
 });
 
 test("a claim profile stores an integer amount with its currency and null for a blank receipt", () => {
@@ -125,17 +162,89 @@ test("no write happens when a lookup fails or finds nothing", async () => {
   expect(down.calls.some((c) => c.verb === "records.create")).toBe(false);
 });
 
-test("a leave type code is checked for a duplicate except against its own row", async () => {
+test("a new leave type code is checked for a duplicate, except against the form's own row on a retry", async () => {
   const form = { code: "annual", name: "Annual leave", paid: "yes" };
   const dup = fake([page(annual)]);
   await expect(S.createRecord(scope, R.LEAVE_TYPE, "lt-new", form, {}, dup.actions)).rejects.toMatchObject({ field: "code", message: R.DUPLICATE_CODE_TEXT });
+  expect(dup.calls.map((c) => c.verb)).toEqual(["records.list"]);
+  expect(dup.calls[0]!.args).toEqual({ table: "leave_types", filters: [{ field: "code", op: "eq", value: "ANNUAL" }], limit: 2 });
   const ok = fake([page(), rec("lt-new", {})]);
   await S.createRecord(scope, R.LEAVE_TYPE, "lt-new", form, {}, ok.actions);
-  expect(ok.calls[1]!.args).toMatchObject({ table: "leave_types", profile: { code: "ANNUAL", name: "Annual leave", paid: true } });
-  const own = fake([page(annual), rec("lt-1", {})]);
-  const record = { ...row("lt-1", { code: "OLD", name: "x", paid: true }), history: [] };
-  await S.updateRecord(scope, R.LEAVE_TYPE, record, { code: "annual", name: "x", paid: "yes" }, own.actions);
-  expect(own.calls[1]!.args).toEqual({ table: "leave_types", record_id: "lt-1", expected_revision: 1, profile: { code: "ANNUAL" } });
+  expect(ok.calls[1]!.args).toMatchObject({ table: "leave_types", record_id: "lt-new", profile: { code: "ANNUAL", name: "Annual leave", paid: true } });
+  // A retry after a lost reply finds its own row under the form's id: not a duplicate; the host refuses the second create itself.
+  const retry = fake([page(row("lt-new", { code: "ANNUAL" })), rec("lt-new", {})]);
+  await S.createRecord(scope, R.LEAVE_TYPE, "lt-new", form, {}, retry.actions);
+  expect(retry.calls.map((c) => c.verb)).toEqual(["records.list", "records.create"]);
+});
+
+test("a leave type's code is read-only after creation: an edit neither shows nor sends it", async () => {
+  expect(R.editable(R.LEAVE_TYPE).fields.map((f) => f.key)).toEqual(["name", "paid"]);
+  expect(R.LEAVE_TYPE.fields.find((f) => f.key === "code")).toMatchObject({ fixed: true, required: true });
+  const record = row("lt-1", { code: "OLD", name: "Old name", paid: true });
+  const renamed = fake([rec("lt-1", {}, 2)]);
+  await S.updateRecord(scope, R.LEAVE_TYPE, record, { code: "NEW", name: "New name", paid: "yes" }, renamed.actions);
+  expect(renamed.calls).toEqual([{ verb: "records.update", args: { table: "leave_types", record_id: "lt-1", expected_revision: 1, profile: { name: "New name" } } }]);
+  const codeOnly = fake([]);
+  expect(await S.updateRecord(scope, R.LEAVE_TYPE, record, { code: "NEW", name: "Old name", paid: "yes" }, codeOnly.actions)).toBeNull();
+  expect(codeOnly.calls).toEqual([]);
+});
+
+test("a failed leave-type lookup blocks the write and surfaces as the failure, never as 'free' or 'missing'", async () => {
+  const down = () => new ApiError("unavailable", 503, { code: "unavailable" });
+  // The duplicate check on a new leave type.
+  const dupCheck = fake([down()]);
+  const e1 = await S.createRecord(scope, R.LEAVE_TYPE, "lt-new", { code: "annual", name: "Annual leave", paid: "yes" }, {}, dupCheck.actions).catch((e: unknown) => e);
+  expect(e1).toBeInstanceOf(ApiError); expect(e1).not.toBeInstanceOf(R.FormError); expect(e1).toMatchObject({ status: 503 });
+  expect(dupCheck.calls.map((c) => c.verb)).toEqual(["records.list"]);
+  // The existence check on a new leave request (the employee lookup succeeds first).
+  const typeCheck = fake([page(ada), down()]);
+  const e2 = await S.createRecord(scope, R.LEAVE_REQUEST, "lv-abc", leaveForm, {}, typeCheck.actions).catch((e: unknown) => e);
+  expect(e2).toBeInstanceOf(ApiError); expect(e2).not.toBeInstanceOf(R.FormError); expect(e2).toMatchObject({ status: 503 });
+  expect(typeCheck.calls.map((c) => [c.verb, c.args.table])).toEqual([["records.list", undefined], ["records.list", "leave_types"]]);
+  // The existence check when an edit changes the leave type.
+  const record = row("lv-1", { leave_type: "ANNUAL", start_date: "2026-03-02", end_date: "2026-03-03", half_days: 4, reason: "", status: "pending" }, 2);
+  const editCheck = fake([down()]);
+  const e3 = await S.updateRecord(scope, R.LEAVE_REQUEST, record, { ...R.viewValues(R.LEAVE_REQUEST, record.profile), leaveType: "unpaid" }, editCheck.actions).catch((e: unknown) => e);
+  expect(e3).toBeInstanceOf(ApiError); expect(e3).not.toBeInstanceOf(R.FormError); expect(e3).toMatchObject({ status: 503 });
+  expect(editCheck.calls.map((c) => [c.verb, c.args.table])).toEqual([["records.list", "leave_types"]]);
+  // The pure checks rethrow the failed call as it is.
+  const failing: Parameters<typeof R.assertLeaveTypeExists>[0] = async () => { throw down(); };
+  await expect(R.assertLeaveTypeExists(failing, "ANNUAL")).rejects.toMatchObject({ status: 503 });
+  await expect(R.assertLeaveCodeFree(failing, "ANNUAL", "lt-new")).rejects.toMatchObject({ status: 503 });
+});
+
+test("every record tab's list and show calls name its own table, through the bridge's field allowlist", async () => {
+  const Q = await import("../../src/features/hr/recordQueries.ts");
+  const V = await import("../../src/features/hr/views.tsx");
+  const { cleanArgs } = await import("../../src/bridge/services.ts");
+  const views = [V.policiesView, V.leaveRequestsView, V.leaveTypesView, V.claimsView, V.openingsView, V.candidatesView(null, {}), V.candidatesView("job-1", {})];
+  expect(views.map((v) => v.spec.table)).toEqual(["policies", "leave_requests", "leave_types", "claims", "job_openings", "candidates", "candidates"]);
+  for (const view of views) {
+    const list = cleanArgs("records.list", Q.listArgs(view, { status: view.filter?.initial ?? "all", query: "", limit: 25 }));
+    expect([view.id, list.table]).toEqual([view.id, view.spec.table]);
+    expect(cleanArgs("records.show", Q.showArgs(view, "rec-1"))).toEqual({ table: view.spec.table, record_id: "rec-1" });
+  }
+  expect(Q.listArgs(V.candidatesView("job-1", {}), { status: "interview", query: "sam", cursor: "c-2", limit: 25 })).toEqual({
+    table: "candidates", query: "sam", limit: 25, cursor: "c-2", order_by: { field: "created_at", direction: "desc" },
+    filters: [{ field: "opening_id", op: "eq", value: "job-1" }, { field: "stage", op: "eq", value: "interview" }],
+  });
+  expect(Q.listArgs(V.claimsView, { status: "all", query: "", limit: 25 }).filters).toBeUndefined();
+  // The pane builds its reads with these functions, not with its own literals.
+  const { readFileSync } = await import("node:fs");
+  const pane = readFileSync(new URL("../../src/features/hr/RecordsPane.tsx", import.meta.url), "utf8");
+  expect(pane).toMatch(/useHrQuery\(scope, "records\.list", listArgs\(view, /);
+  expect(pane).toMatch(/useHrQuery\(scope, "records\.show", showArgs\(view, recordId\)/);
+  expect(pane).not.toMatch(/table: view\.spec\.table/);
+});
+
+test("approve is confirmed like reject, and a claim filter offers no paid status", async () => {
+  const { readFileSync } = await import("node:fs");
+  const pane = readFileSync(new URL("../../src/features/hr/RecordsPane.tsx", import.meta.url), "utf8");
+  expect(pane).toMatch(/primary=\{[^\n]*onClick=\{\(\) => confirm\("approved"\)\}/);
+  expect(pane).not.toMatch(/decideNow\("approved"/);
+  expect(pane).toContain("cannot be changed afterwards in this release");
+  const V = await import("../../src/features/hr/views.tsx");
+  expect(V.claimsView.filter!.values).toEqual(["submitted", "approved", "rejected"]);
 });
 
 test("a candidate create carries the chosen opening", async () => {
@@ -170,7 +279,7 @@ test("an owner decision writes status, date and note only, and a stage move writ
   expect(c.calls[0]!.args).toEqual({ table: "candidates", record_id: "cand-1", expected_revision: 1, profile: { stage: "interview" } });
 });
 
-test("failure wording claims only what the frame can know", () => {
+test("failure wording claims only what the frame can know", async () => {
   const t = (s: string) => s;
   const kind = (status: number, code: string | undefined, op: "create" | "update") => S.problemFor(new ApiError("x", status, code ? { code } : undefined), op, t).kind;
   expect(kind(409, "conflict", "create")).toBe("maybe_saved");
@@ -184,6 +293,12 @@ test("failure wording claims only what the frame can know", () => {
   expect(text).not.toMatch(/duplicate/i);
   expect(text).toMatch(/may already be decided/);
   expect(S.problemFor(new R.FormError("amount", "Fill in this field."), "create", t)).toMatchObject({ field: "amount", kind: "form" });
+  // A 403 also means withdrawn access or an undeclared operation: the text names every cause, not only "owner-only".
+  const { FORBIDDEN_TEXT, hostErrorText } = await import("../../src/features/hr/hostErrors.ts");
+  const forbidden = S.problemFor(new ApiError("x", 403, { code: "forbidden" }), "update", t).message;
+  expect(forbidden).toBe(FORBIDDEN_TEXT);
+  expect(hostErrorText(new ApiError("x", 403, { code: "forbidden" }), "fallback")).toBe(FORBIDDEN_TEXT);
+  expect(FORBIDDEN_TEXT).toMatch(/no longer available here, or these records are for the workspace owner\. Reload the page\./);
 });
 
 test("the zh-HK catalogue covers every label, hint, option, message and refusal text", async () => {
@@ -196,13 +311,15 @@ test("the zh-HK catalogue covers every label, hint, option, message and refusal 
   }
   for (const v of [...R.STAGES, "pending", "approved", "rejected", "cancelled", "submitted", "paid"]) strings.add(optionLabel(v));
   for (const m of Object.values(S.TEXT)) strings.add(m);
+  const { FORBIDDEN_TEXT } = await import("../../src/features/hr/hostErrors.ts");
+  strings.add(FORBIDDEN_TEXT);
   const { readFileSync } = await import("node:fs");
   const src = readFileSync(new URL("../../src/domain/records.ts", import.meta.url), "utf8");
   for (const m of src.matchAll(/FormError\([^,]+, "([^"]+)"/g)) strings.add(m[1]!);
   for (const file of ["RecordsPane.tsx", "Sections.tsx", "HrScreen.tsx", "views.tsx"]) {
     const text = readFileSync(new URL(`../../src/features/hr/${file}`, import.meta.url), "utf8");
     for (const m of text.matchAll(/\bt\("([^"]+)"\)/g)) strings.add(m[1]!);
-    for (const m of text.matchAll(/(?:title|newLabel|searchHint|blockedNew): "([^"]+)"/g)) strings.add(m[1]!);
+    for (const m of text.matchAll(/(?:title|newLabel|searchHint|blockedNew|body|confirm): "([^"]+)"/g)) strings.add(m[1]!);
     for (const m of text.matchAll(/^const TAB_LABEL.*$/gm)) for (const w of m[0].matchAll(/: "([^"]+)"/g)) strings.add(w[1]!);
   }
   strings.add("Reject…"); strings.add("All");

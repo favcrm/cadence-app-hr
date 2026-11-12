@@ -6,12 +6,14 @@ import {
   editable, emptyValues, newRecordId, STAGES, statusOf, stageOf, todayLocal, viewScreening, viewValues,
   type Decision, type TableSpec, type Values,
 } from "../../domain/records";
+import { chip } from "./chip";
 import FrameDrawer from "./FrameDrawer";
 import { parseRecord, parseRecordList, type HostRecord, type HostScope } from "./hostActions";
 import { hostErrorText } from "./hostErrors";
 import ListPager, { LIST_PAGE_SIZE } from "./ListPager";
 import { useLocale } from "./locale";
 import RecordForm, { optionLabel, type RecordProblem } from "./RecordForm";
+import { listArgs, showArgs } from "./recordQueries";
 import { createRecord, decide, problemFor, setField, updateRecord, type Problem } from "./recordsSubmit";
 import { QueryRefresh, useHrQuery } from "./resources";
 
@@ -38,9 +40,12 @@ export interface View {
   newId: string;
 }
 const NO_RECORDS: HostRecord[] = [];
-export const chip = (value: unknown, t: (s: string) => string) => {
-  const v = typeof value === "string" && value !== "" ? value : null;
-  return <span className="chip" data-status={v ?? "unknown"}>{t(optionLabel(v ?? ""))}</span>;
+/** The confirm step of each owner decision. Both are final in this release, so both are confirmed. */
+const DECISION_TEXT: Record<Decision, { title: string; body: string; confirm: string }> = {
+  approved: { title: "Approve this record?", confirm: "Approve",
+    body: "An approved leave request or claim cannot be changed afterwards in this release, not even to correct it. You may leave a short note for the record." },
+  rejected: { title: "Reject this record?", confirm: "Reject",
+    body: "The owner's decision is final: a decided record cannot be changed. You may leave a short note for the record." },
 };
 
 export default function RecordsPane({ scope, canWrite, view, recordId, onSelect, onClose }: {
@@ -54,10 +59,7 @@ export default function RecordsPane({ scope, canWrite, view, recordId, onSelect,
   const [cursors, setCursors] = useState<string[]>([]);
   const [page, setPage] = useState(0);
   const cursor = page > 0 ? cursors[page - 1] : undefined;
-  const filters: RecordFilter[] = [...(view.filters ?? []), ...(view.filter && status !== "all" ? [{ field: view.filter.field, op: "eq" as const, value: status }] : [])];
-  const state = useHrQuery(scope, "records.list", {
-    table: view.spec.table, query: committed || undefined, limit: LIST_PAGE_SIZE, cursor, filters: filters.length ? filters : undefined, order_by: { field: "created_at", direction: "desc" as const },
-  }, parseRecordList);
+  const state = useHrQuery(scope, "records.list", listArgs(view, { status, query: committed, cursor, limit: LIST_PAGE_SIZE }), parseRecordList);
   const records = state.data?.records ?? NO_RECORDS;
   const nextCursor = state.data?.nextCursor ?? null;
   const total = state.data?.total ?? null;
@@ -102,7 +104,7 @@ export default function RecordsPane({ scope, canWrite, view, recordId, onSelect,
       </div>
       {view.blockedNew && canWrite && <p className="text-label text-ink-400">{t(view.blockedNew)}</p>}
       {loading && <Loading>{t("Reading the records…")}</Loading>}
-      {error !== null && !loading && <ErrorNotice onRetry={() => void state.store.refresh()}>{hostErrorText(state.failure, error)}</ErrorNotice>}
+      {error !== null && !loading && <ErrorNotice onRetry={() => void state.store.refresh()}>{t(hostErrorText(state.failure, error))}</ErrorNotice>}
       {error === null && !loading && records.length === 0 && (
         <EmptyState name={view.id} title={t(filtered ? "Nothing matches this view" : "Nothing here yet")}>
           {filtered ? t("Clear the search or choose All to see everything.") : t(canWrite ? "Add the first one with the button above." : "Nothing has been added yet.")}
@@ -166,13 +168,13 @@ function NewRecord({ scope, view, canWrite, onCreated, onCancel }: { scope: Host
 
 function RecordDrawer({ scope, view, recordId, canWrite, onClose }: { scope: HostScope; view: View; recordId: string; canWrite: boolean; onClose: () => void }) {
   const { t } = useLocale();
-  const state = useHrQuery(scope, "records.show", { table: view.spec.table, record_id: recordId }, parseRecord);
+  const state = useHrQuery(scope, "records.show", showArgs(view, recordId), parseRecord);
   const { loading, error } = state;
   const record = state.data;
   const [editing, setEditing] = useState(false);
   const [pending, setPending] = useState(false);
   const [problem, setProblem] = useState<Problem | null>(null);
-  const [rejecting, setRejecting] = useState(false);
+  const [confirming, setConfirming] = useState<Decision | null>(null);
   const [note, setNote] = useState("");
   const [stage, setStage] = useState("");
 
@@ -184,7 +186,8 @@ function RecordDrawer({ scope, view, recordId, canWrite, onClose }: { scope: Hos
     setPending(true); setProblem(null);
     void work().then((next) => { if (next) state.store.write(() => next); after?.(); }).catch((e: unknown) => fail(e, "update")).finally(() => setPending(false));
   };
-  const decideNow = (decision: Decision, text: string) => record && run(() => decide(scope, view.spec, record, decision, todayLocal(), text), () => { setRejecting(false); setNote(""); });
+  const decideNow = (decision: Decision, text: string) => record && run(() => decide(scope, view.spec, record, decision, todayLocal(), text), () => { setConfirming(null); setNote(""); });
+  const confirm = (decision: Decision) => { setProblem(null); setNote(""); setConfirming(decision); };
   const values = record ? viewValues(view.spec, record.profile) : null;
   const spec = view.spec;
   const title = record ? view.columns(profile, t)[0]?.cell : null;
@@ -226,7 +229,8 @@ function RecordDrawer({ scope, view, recordId, canWrite, onClose }: { scope: Hos
     { id: "details", label: t("Details"), panel: <p className="num text-micro text-ink-500">{t("Record")} <span className="num">{recordId}</span> · {t("revision")} r{record.revision} · {t("digest")} {record.digest.slice(0, 18)}…</p> },
   ] : [];
   const canEdit = canWrite && record !== null && (view.kind !== "decision" || isOpen);
-  const menu: DrawerMenuItem[] = isOpen && canWrite ? [{ key: "reject", label: t("Reject…"), destructive: true, onSelect: () => { setProblem(null); setRejecting(true); } }] : [];
+  const menu: DrawerMenuItem[] = isOpen && canWrite ? [{ key: "reject", label: t("Reject…"), destructive: true, onSelect: () => confirm("rejected") }] : [];
+  const dialog = confirming ? DECISION_TEXT[confirming] : null;
 
   return (
     <>
@@ -234,7 +238,7 @@ function RecordDrawer({ scope, view, recordId, canWrite, onClose }: { scope: Hos
         kind={spec.table} kicker={t(optionLabel(spec.noun))} label={t("Record details")} title={(loading ? "" : flat(title)) || t("Record details")}
         pills={record && view.filter ? chip(profile[view.filter.field], t) : undefined}
         tabs={tabs}
-        state={loading ? <Loading>{t("Reading the record…")}</Loading> : error !== null && !record ? <ErrorNotice onRetry={reload}>{hostErrorText(state.failure, error)}</ErrorNotice> : state.updating ? <span role="status"><QueryRefresh updating /></span> : undefined}
+        state={loading ? <Loading>{t("Reading the record…")}</Loading> : error !== null && !record ? <ErrorNotice onRetry={reload}>{t(hostErrorText(state.failure, error))}</ErrorNotice> : state.updating ? <span role="status"><QueryRefresh updating /></span> : undefined}
         edit={editing && canEdit && record ? {
           formId: `hr-${view.id}-edit`, title: t("Edit — saving is refused if the record changed since you opened it"), pending, onCancel: () => { setEditing(false); setProblem(null); },
           body: (
@@ -246,16 +250,16 @@ function RecordDrawer({ scope, view, recordId, canWrite, onClose }: { scope: Hos
         } : null}
         menu={menu}
         secondary={canEdit ? <Button size="sm" onClick={() => { setEditing(true); setProblem(null); }}>{t("Edit")}</Button> : undefined}
-        primary={isOpen && canWrite ? <Button size="sm" variant="primary" loading={pending} disabled={pending} onClick={() => decideNow("approved", "")}>{t("Approve")}</Button> : undefined}
+        primary={isOpen && canWrite ? <Button size="sm" variant="primary" disabled={pending} onClick={() => confirm("approved")}>{t("Approve…")}</Button> : undefined}
         note={record && !canWrite ? t("Read-only view. Edits are disabled on this board.") : undefined}
         onClose={onClose}
       />
-      {rejecting && (
-        <ConfirmDialog title={t("Reject this record?")} confirmLabel={t("Reject")} pending={pending} error={problem?.message ?? null}
-          body={<div className="grid gap-2"><p>{t("The owner's decision is final: a decided record cannot be changed. You may leave a short note for the record.")}</p>
-            <label className="text-label" htmlFor="hr-reject-note">{t("Note (optional)")}</label>
-            <textarea id="hr-reject-note" className="field hr-textarea" rows={3} maxLength={500} value={note} onChange={(e) => setNote(e.target.value)} /></div>}
-          onConfirm={() => decideNow("rejected", note)} onCancel={() => { setRejecting(false); setProblem(null); }} />
+      {confirming && dialog && (
+        <ConfirmDialog title={t(dialog.title)} confirmLabel={t(dialog.confirm)} pending={pending} error={problem?.message ?? null}
+          body={<div className="grid gap-2"><p>{t(dialog.body)}</p>
+            <label className="text-label" htmlFor="hr-decision-note">{t("Note (optional)")}</label>
+            <textarea id="hr-decision-note" className="field hr-textarea" rows={3} maxLength={500} value={note} onChange={(e) => setNote(e.target.value)} /></div>}
+          onConfirm={() => decideNow(confirming, note)} onCancel={() => { setConfirming(null); setProblem(null); }} />
       )}
     </>
   );

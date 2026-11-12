@@ -4,12 +4,12 @@ import {
   type Decision, type Failure, type ListFn, type TableSpec, type Values,
 } from "../../domain/records";
 import { hostActions, type HostActions, type HostRecord, type HostScope } from "./hostActions";
-import { SESSION_EXPIRED_TEXT } from "./hostErrors";
+import { FORBIDDEN_TEXT, SESSION_EXPIRED_TEXT } from "./hostErrors";
 
 const listFor = (scope: HostScope, actions: HostActions): ListFn => (args) => actions.list(scope, args);
 
 /** Everything a create needs besides the form: lookups run first, and a failed lookup blocks the write. */
-export async function prepareCreate(scope: HostScope, spec: TableSpec, values: Values, extra: Record<string, string> = {}, actions: HostActions = hostActions) {
+export async function prepareCreate(scope: HostScope, spec: TableSpec, recordId: string, values: Values, extra: Record<string, string> = {}, actions: HostActions = hostActions) {
   const profile: Record<string, unknown> = buildProfile(spec, values);
   const list = listFor(scope, actions);
   if (spec.table === "leave_requests") checkRequestDates(values);
@@ -18,22 +18,23 @@ export async function prepareCreate(scope: HostScope, spec: TableSpec, values: V
     profile.employee_id = employee.id; profile.employee_name = employee.name;
   }
   if (spec.table === "leave_requests") await assertLeaveTypeExists(list, String(profile.leave_type));
-  if (spec.table === "leave_types") await assertLeaveCodeFree(list, String(profile.code), null);
+  if (spec.table === "leave_types") await assertLeaveCodeFree(list, String(profile.code), recordId);
   return { ...profile, ...extra };
 }
 /** `recordId` is the form's own id: a retry after a lost reply reuses it, so the host refuses a second row. */
 export async function createRecord(scope: HostScope, spec: TableSpec, recordId: string, values: Values, extra: Record<string, string> = {}, actions: HostActions = hostActions) {
-  return actions.create(scope, recordId, await prepareCreate(scope, spec, values, extra, actions), spec.table);
+  return actions.create(scope, recordId, await prepareCreate(scope, spec, recordId, values, extra, actions), spec.table);
 }
-/** An update names the revision it was read at and carries only what changed; a changed code or leave type is looked up first. */
+/**
+ * An update names the revision it was read at and carries only what changed. A changed leave type is looked up
+ * first; a leave type's own code is fixed at creation, so an edit never sends it.
+ */
 export async function updateRecord(scope: HostScope, spec: TableSpec, record: HostRecord, values: Values, actions: HostActions = hostActions) {
   const next = buildProfile(editable(spec), values);
   if (spec.table === "leave_requests") checkRequestDates(values);
   const patch = changedFields(record.profile, next);
   if (Object.keys(patch).length === 0) return null;
-  const list = listFor(scope, actions);
-  if ("code" in patch && spec.table === "leave_types") await assertLeaveCodeFree(list, String(patch.code), record.id);
-  if ("leave_type" in patch) await assertLeaveTypeExists(list, String(patch.leave_type));
+  if ("leave_type" in patch) await assertLeaveTypeExists(listFor(scope, actions), String(patch.leave_type));
   return actions.update(scope, record.id, record.revision, patch, spec.table);
 }
 /** An owner decision writes status, the decision date and the note, nothing else. */
@@ -56,7 +57,7 @@ export const TEXT: Record<Exclude<Failure, "session">, string> = {
   store_unavailable: "The store could not save this change. If a code may already exist, search for it first; otherwise try again.",
   timeout: "The workspace did not answer. Check the list before saving again, so the same record is not added twice.",
   maybe_saved: "This record may already be saved. Check the list before trying again.",
-  forbidden: "This session cannot read or change these records. They are for the workspace owner.",
+  forbidden: FORBIDDEN_TEXT,
   rejected: "The change was not saved. Check the fields, or the record may already be decided or changed. Reload and look, then try again.",
   neutral: "The change could not be saved. Try again; if it keeps happening, reload the page.",
 };

@@ -3,12 +3,16 @@ import { ApiError } from "@cadence/screen-ui";
 /** A hosted session that expired answers with a redirect `fetch` cannot follow; it reads as a transport failure. */
 export const SESSION_EXPIRED_TEXT = "Your session expired or the connection dropped — reload the page to sign in again.";
 
-export const FORBIDDEN_TEXT = "This session cannot read these records. They are for the workspace owner.";
+/**
+ * A 403 has several causes the frame cannot tell apart: the screen's access was withdrawn, the operation is not
+ * declared, or the records are owner-only and this member is not the owner. The board closes the frame on the
+ * first 403 anyway, so the text names every cause and the one way out.
+ */
+export const FORBIDDEN_TEXT = "This app's access is no longer available here, or these records are for the workspace owner. Reload the page.";
 
 export function hostErrorText(error: unknown, fallback: string): string {
   if (error instanceof ApiError) {
     if (error.status === 401) return SESSION_EXPIRED_TEXT;
-    // The board names a refusal by status only; a 403 also answers a reader who is not the owner.
     if (error.status === 403) return FORBIDDEN_TEXT;
     return error.message === "" || error.message.startsWith("[object ") ? fallback : error.message;
   }
