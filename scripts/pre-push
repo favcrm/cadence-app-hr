@@ -1,0 +1,20 @@
+#!/bin/sh
+# Install: ln -s ../../scripts/pre-push .git/hooks/pre-push
+# Build, check the bundle, then test. `cadence app check` exits 3 for a storage-bearing
+# bundle on the native checker (hosted-only app-storage); only that refusal is accepted.
+set -eu
+cd "$(dirname "$0")/.."
+pnpm run typecheck
+pnpm run build
+pnpm run verify
+report="$(mktemp)"
+trap 'rm -f "$report"' EXIT
+status=0
+cadence app check app --json > "$report" || status=$?
+if [ "$status" -ne 0 ] && [ "$status" -ne 3 ]; then
+  echo "app check failed with exit ${status}" >&2
+  cat "$report" >&2
+  exit 1
+fi
+python3 .github/scripts/assert-app-check.py "$report"
+pnpm test

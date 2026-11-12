@@ -1,0 +1,16 @@
+{
+  "contract": "app-storage/v1",
+  "app": "hr",
+  "record_kind": "employee",
+  "schema_version": 1,
+  "compatible_schema_versions": [1],
+  "default_table": "employees",
+  "migrations": [
+    {
+      "version": 1,
+      "path": "storage/001-initial.json",
+      "sha256": "sha256:e90022e7a06babd0b69ffec315fa7637ae17d2cbf881c10d72a0b216b69da7f1"
+    }
+  ],
+  "record_search_columns": ["display_name", "employee_no", "email", "department"]
+}

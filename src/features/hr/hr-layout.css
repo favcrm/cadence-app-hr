@@ -1,0 +1,67 @@
+/* HR-owned layout on the SDK's tokens. Shared controls and utilities come from the pinned screen UI. */
+.hr { gap: 0.75rem; }
+
+/* The pinned SDK ships no base rule for the `.chip` markup, so status and type spans would run into text. */
+.hr .chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  max-width: 100%;
+  padding: 0.05rem 0.4rem;
+  border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+  border-radius: 0.25rem;
+  font: 500 var(--text-micro) var(--font-mono);
+  line-height: 1.5;
+  vertical-align: middle;
+  overflow-wrap: anywhere;
+}
+.hr .chip[data-status="active"] { color: var(--color-ok); }
+.hr .chip[data-status="on_leave"] { color: var(--color-warn); }
+.hr .chip[data-status="left"] { color: var(--color-ink-400); }
+
+/* Outlet headings take focus programmatically after navigation and are not interactive. */
+.hr :is(h1, h2, h3, h4)[data-outlet-heading]:focus { outline: none; }
+
+.hr-surface { min-width: 0; }
+.hr-list { display: grid; gap: 0.75rem; align-content: start; min-width: 0; }
+.hr-search { flex: 1 1 14rem; min-width: 0; }
+.hr-search-input { width: 100%; }
+
+/* Single-line fields share the Select trigger's 2rem height and 12px label scale. */
+.hr .field:not(textarea) { height: 2rem; padding: 0 0.75rem; font-size: var(--text-label); }
+
+.hr-list-controls { --hr-list-control-height: 1.75rem; container-type: inline-size; }
+.hr-list-controls > span[role="status"]:empty { display: none; }
+.hr-list-controls :is(.hr-list-toolbar, .hr-pager) :is(.field, .btn, .select-trigger) { height: var(--hr-list-control-height); font-size: var(--text-label); }
+.hr-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
+.hr-list-toolbar .hr-search { flex: 0 1 24rem; }
+.hr-list-toolbar .hr-list-create { margin-left: auto; padding-inline: 0.75rem; }
+.hr-list-controls .hr-pager { justify-content: space-between; }
+.hr-pager { display: flex; align-items: center; flex-wrap: wrap; gap: 0.75rem; min-width: 0; }
+.hr-page-controls { display: flex; align-items: center; gap: 0.5rem; }
+.hr-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+
+@container (max-width: 30rem) {
+  .hr-list-toolbar .hr-search { flex-basis: 100%; }
+  .hr-list-toolbar .hr-list-create { margin-left: 0; }
+  .hr-page-controls { width: 100%; justify-content: space-between; }
+}
+@media (max-width: 639px), (pointer: coarse) { .hr-list-controls { --hr-list-control-height: 2.25rem; } }
+
+.hr-table-wrap {
+  overflow-x: auto;
+  max-width: 100%;
+  /* Containment keeps the wide table's ink inside the wrap while it scrolls; the document never outgrows the viewport. */
+  contain: layout paint;
+  border: 1px solid var(--color-ink-700);
+  border-radius: 0.5rem;
+  background: var(--color-ink-850);
+}
+.hr-table-wrap:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+.hr-table { width: 100%; min-width: 42rem; border-collapse: collapse; font-size: var(--text-table); }
+.hr-table th, .hr-table td { text-align: left; padding: 0.55rem 0.75rem; border-bottom: 1px solid var(--color-ink-700); vertical-align: top; }
+.hr-table thead th { font-size: var(--text-micro); text-transform: uppercase; letter-spacing: 0.06em; color: var(--color-ink-500); }
+.hr-table tbody tr:last-child td { border-bottom: 0; }
+.hr-nowrap { white-space: nowrap; }
+.hr-row-open { cursor: pointer; }
+.hr-row-open:hover { background: var(--color-ink-850); }

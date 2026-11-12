@@ -1,0 +1,2089 @@
+#!/usr/bin/env python3
+"""Deterministic packaging and verification for the ``app/`` bundle.
+
+CAD-962: builds the ``app/`` tree into a versioned
+``.tar.gz`` release archive plus a SHA256 sidecar under ``dist/``, or
+verifies a previously built archive against the bundle.
+
+Scope and honesty notes:
+
+* This tool packages the bundle *bytes* only. The SHA256 sidecar is an
+  integrity digest of the archive — it is NOT the Cadence host bundle
+  digest (`sha256:...` from `app approve`), never a signature, and no
+  authorization or approval evidence.
+* The structural checks mirror the *shape* rules the v0 host loader
+  applies in `src/issue/app.rs` (`bundle_files` + `parse_manifest`):
+  required `app.md`, required `workflows/`, the existing top-level
+  dirs plus bounded `screens/hr/`, no symlinks, no dotfiles, no unknown top-level
+  entries, tag-shaped names, bounded file count and sizes, and the
+  manifest frontmatter key allowlist. They run offline and do NOT
+  reimplement workflow checks, the secret guard, slot cross-checks or
+  descriptor parsing — a PASS here is not host validation.
+* AOS-384/CRM-13 adds the `app-storage/v1` member contract: the
+  `app-storage.json` root descriptor and flat `storage/<tag>.json`
+  migrations, checked against the exact declared raw-byte sha256 and a
+  pure logical model. That member is a newer-host lexical contract;
+  native Cadence has no app-storage execution runtime and refuses the
+  bundle, so this check never claims schema execution, migration,
+  installation or update.
+* The release archive installs through the *extracted bundle path*:
+  extract to a private directory and run
+  `cadence app install <extracted-bundle-dir> --project <key>`. The
+  current loader installs a bundle root (`app.md` at the top level);
+  this repository root is NOT a valid direct install source because
+  the bundle lives under `app/`, and a git URL install scans the clone
+  root — no `#subdir` form exists. See docs/repository-layout.md.
+* Determinism: archive member mtimes are normalized to a fixed epoch,
+  uid/gid/uname/gname are zeroed, and entries are written sorted, so
+  repeated builds of identical inputs are byte-identical. Byte
+  identity is not guaranteed across Python versions or platforms.
+
+Only the Python standard library is used; this choice does not select
+an app execution runtime.
+"""
+
+from __future__ import annotations
+
+import argparse
+import gzip
+import hashlib
+import io
+import json
+import os
+import re
+import shutil
+import stat
+import sys
+import tarfile
+import tempfile
+import zipfile
+from dataclasses import dataclass
+from pathlib import Path, PurePosixPath
+
+# --- Host v0 loader shape bounds (src/issue/app.rs) -------------------
+# Mirrors bundle_files()/parse_manifest() constants. If the host
+# contract moves, update these and the docs; do not weaken a check to
+# force a build.
+
+MANIFEST = "app.md"
+# Exact root descriptor names the host admits beside app.md (CAD-1415
+# draft: app-actions.json, app-assistant.json; CRM-3: app-chat.json, the
+# installed 0.1.0 chat contract kept for upgrade; AOS-384/CRM-13:
+# app-storage.json, the app-owned logical schema descriptor). Byte/shape
+# checks only.
+ROOT_DESCRIPTORS = ("app-actions.json", "app-assistant.json", "app-chat.json", "app-storage.json")
+DESCRIPTOR_CONTRACTS = {
+    "app-actions.json": "app-actions/v1",
+    "app-assistant.json": "app-assistant/v1",
+    "app-chat.json": "app-chat/v1",
+    "app-storage.json": "app-storage/v1",
+}
+TOP_DIRS = ("workflows", "rubrics", "templates", "views", "bindings", "screens", "storage")
+STORAGE_DESCRIPTOR = "app-storage.json"
+STORAGE_DIR = "storage"
+STORAGE_CONTRACT = "app-storage/v1"
+# AOS-384 package member bounds. The host re-validates the same shape at
+# install; these offline bounds keep a hostile bundle from shipping a
+# migration whose declared hash/filename cannot be checked here.
+MAX_STORAGE_DESCRIPTOR_BYTES = 32 * 1024
+MAX_MIGRATION_BYTES = 64 * 1024
+MAX_STORAGE_BYTES = 256 * 1024
+MAX_MIGRATIONS = 128
+MAX_RECORD_BYTES = 256 * 1024
+MAX_STORAGE_TABLES = 64
+MAX_TABLE_COLUMNS = 64
+MAX_TABLE_INDEXES = 32
+MAX_MIGRATION_OPS = 128
+MAX_PLAN_OPS = 512
+STORAGE_IDENT_RE = re.compile(r"[a-z][a-z0-9_]{0,62}\Z")
+RECORD_KIND_RE = re.compile(r"[a-z][a-z0-9_-]{0,31}\Z")
+COLUMN_FORMATS = ("email", "phone", "tag")
+MAX_JSON_SCHEMA_BYTES = 8 * 1024
+MAX_JSON_SCHEMA_DEPTH = 8
+MAX_JSON_SCHEMA_NODES = 128
+STORAGE_PATH_RE = re.compile(r"storage/[a-z0-9][a-z0-9-]{0,31}\.json\Z")
+HOST_COLUMNS = ("id", "context_id", "revision", "created_at", "updated_at")
+COLUMN_TYPES = ("text", "integer", "real", "boolean", "json")
+STORAGE_DESCRIPTOR_KEYS = (
+    "contract",
+    "app",
+    "record_kind",
+    "schema_version",
+    "compatible_schema_versions",
+    "default_table",
+    "migrations",
+    "record_write_schema",
+    "record_search_columns",
+)
+OPTIONAL_DESCRIPTOR_KEYS = ("record_write_schema", "record_search_columns")
+MIGRATION_KEYS = ("version", "path", "sha256")
+COLUMN_KEYS = ("name", "type", "nullable", "default", "max_length", "enum", "format", "json_schema")
+JSON_SCHEMA_TYPES = ("object", "array", "string", "number", "integer", "boolean", "null")
+JSON_SCHEMA_SINGLE = ("items", "not", "if", "then", "else")
+JSON_SCHEMA_ARRAY = ("allOf", "anyOf", "oneOf")
+JSON_SCHEMA_KEYWORDS = (
+    "type",
+    "const",
+    "enum",
+    "minimum",
+    "maximum",
+    "exclusiveMinimum",
+    "exclusiveMaximum",
+    "minLength",
+    "maxLength",
+    "pattern",
+    "properties",
+    "required",
+    "additionalProperties",
+    "items",
+    "minItems",
+    "maxItems",
+    "uniqueItems",
+    "allOf",
+    "anyOf",
+    "oneOf",
+    "not",
+    "if",
+    "then",
+    "else",
+)
+
+MANIFEST_KEYS = ("app", "title", "version", "needs", "summary", "listing")
+GATED_KEYS = ("records", "actions", "ui", "settings", "actors")
+NEEDS_KEYS = ("connections", "capabilities", "views", "bindings", "requires")
+VIEW_CONTRACT = "app-views/v1"
+BINDING_CONTRACT = "app-bindings/v1"
+VIEWS_FILE = "app-views-v1.json"
+BINDINGS_FILE = "app-bindings-v1.json"
+MAX_FILE_BYTES = 256 * 1024  # plan::MAX_PLAN_BYTES
+MAX_FILES = 128
+MAX_APP_BYTES = 2 * 1024 * 1024
+TAG_RE = re.compile(r"[a-z0-9][a-z0-9-]{0,31}\Z")
+# Matches 1.y.z with each component a non-negative integer (no "+"
+# accepted by int() either — the leading digit class blocks it).
+VERSION_RE = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+\Z")
+
+# Tar member metadata normalized for byte-identical rebuilds.
+EPOCH = 0
+SIDECAR_SUFFIX = ".sha256"
+ALLOWED_FORMATS = ("tar.gz", "zip")
+
+
+class PackageError(Exception):
+    """A refused input or failed check — printed to stderr, exit 1."""
+
+
+@dataclass(frozen=True)
+class Manifest:
+    """Fields this tool deliberately reads from `app.md` frontmatter.
+
+    `app`, `title`, `version` are required strings; `summary` is an
+    optional one-line string; `connections` is the declared slot list
+    under `needs:`; `view_contract`/`binding_contract` are the declared
+    `needs.views.contract`/`needs.bindings.contract` values. Anything
+    else is parsed only enough to enforce the key allowlists.
+    """
+
+    app: str
+    title: str
+    version: str
+    summary: str | None
+    connections: tuple[str, ...]
+    view_contract: str | None
+    binding_contract: str | None
+    requires: tuple[tuple[str, tuple[int, ...]], ...] = ()
+
+
+# --- Restricted YAML frontmatter reader -------------------------------
+#
+# This is NOT a serde_yaml-parity parser — it is a deliberately narrow
+# reader for the metadata this tool extracts (`app`, `title`, `version`,
+# `summary`, `needs.connections`, `needs.views.contract`,
+# `needs.bindings.contract`). It accepts only: a `---` fenced block of
+# `key: value` lines; plain scalars (single/double-quoted or unquoted);
+# a `needs:` mapping whose values are a `connections:` flow list (`[]`
+# or `[a, b]`), `views:`/`bindings:` maps with a lone `contract:`
+# scalar, or an empty `capabilities: {}`. It deliberately refuses —
+# rather than silently misread — frontmatter the host's serde_yaml would
+# also refuse: unknown or later-stage keys, duplicate keys at any level,
+# tab indentation, a null/non-mapping `needs:`, non-string scalars
+# (`app: 123`, `title: true`), and any nested or flow structure outside
+# the listed shape. Do not extend this into a general YAML parser; the
+# host re-validates the manifest at install regardless.
+
+
+def _split_front(text: str, rel: str = MANIFEST) -> tuple[str, str]:
+    """Split `---` fenced frontmatter like the host's parse::split_front.
+
+    Returns (yaml, body). Refuses a missing open or closing fence.
+    """
+    stripped = text.removeprefix("\ufeff")
+    if not (stripped.startswith("---\n") or stripped.startswith("---\r\n")):
+        raise PackageError(
+            f"{rel} must start with a '---' frontmatter fence — "
+            "frontmatter `app`, `title`, `version` and the agent guide are required"
+        )
+    after_open = 5 if stripped.startswith("---\r\n") else 4
+    rest = stripped[after_open:]
+    for m in re.finditer(r"---", rest):
+        idx = m.start()
+        before_ok = idx == 0 or rest[idx - 1] == "\n"
+        after = rest[idx + 3 :]
+        after_ok = (
+            after == ""
+            or after.startswith("\n")
+            or after.startswith("\r\n")
+            or after.startswith(" ")
+        )
+        if before_ok and after_ok:
+            yaml = rest[:idx]
+            # The fence's own line ending, then one blank separator
+            # line — same rule as the host's parse::split_front.
+            body = after
+            if body.startswith("\r\n"):
+                body = body[2:]
+            elif body.startswith("\n"):
+                body = body[1:]
+            if body.startswith("\n"):
+                body = body[1:]
+            elif body.startswith("\r\n"):
+                body = body[2:]
+            return yaml, body
+    raise PackageError(f"{rel}: frontmatter has no closing '---' fence")
+
+
+def _unquote(value: str, where: str) -> str:
+    """Read one YAML plain/single/double-quoted scalar."""
+    value = value.strip()
+    if len(value) >= 2 and value[0] == "'" and value[-1] == "'":
+        return value[1:-1].replace("''", "'")
+    if len(value) >= 2 and value[0] == '"' and value[-1] == '"':
+        # Double-quoted scalars support backslash escapes; only the ones
+        # a manifest realistically carries are decoded, and an unknown
+        # escape refuses instead of guessing.
+        inner = value[1:-1]
+        out = []
+        i = 0
+        escapes = {"n": "\n", "t": "\t", '"': '"', "\\": "\\", "0": "\0"}
+        while i < len(inner):
+            ch = inner[i]
+            if ch == "\\":
+                i += 1
+                if i >= len(inner) or inner[i] not in escapes:
+                    raise PackageError(f"{where}: unsupported escape in quoted scalar")
+                out.append(escapes[inner[i]])
+            else:
+                out.append(ch)
+            i += 1
+        return "".join(out)
+    if value == "" or value.startswith(("{", "[", "#", "!", "&", "*", "|", ">")):
+        raise PackageError(f"{where}: expected a plain scalar value")
+    # A `#` only starts a comment after whitespace.
+    value = re.sub(r"\s+#.*\Z", "", value).strip()
+    if value in ("~", "null", "Null", "NULL"):
+        raise PackageError(f"{where}: expected a non-empty scalar, got null")
+    return value
+
+
+_SCALAR_WORDS = {"true", "false", "yes", "no", "on", "off", "null", "~"}
+
+
+def _refuse_nonstring_scalar(key: str, value: str | None) -> None:
+    """Refuse a manifest field that YAML would type as non-string.
+
+    `_unquote` already returns the raw text for plain scalars; a bare
+    number or boolean keyword is what serde_yaml would hand the host as
+    a non-string (its `as_str()` is None → refuse). Quoted values
+    (`version: '0.1.0'`) already arrived as real strings.
+    """
+    if value is None:
+        return
+    low = value.strip().lower()
+    if low in _SCALAR_WORDS or re.fullmatch(r"[-+]?[0-9]+", low) or re.fullmatch(
+        r"[-+]?[0-9]*\.[0-9]+", low
+    ):
+        raise PackageError(
+            f"{MANIFEST} `{key}:` must be a string — `{value}` reads as a "
+            "non-string scalar"
+        )
+
+
+def _flow_strings(value: str, where: str) -> list[str]:
+    """Parse `[a, b]` or `[]` into a list of plain scalars."""
+    value = value.strip()
+    if not (value.startswith("[") and value.endswith("]")):
+        raise PackageError(
+            f"{where} is a list of slot names — [publish, cms]"
+        )
+    inner = value[1:-1].strip()
+    if not inner:
+        return []
+    out = []
+    for tok in inner.split(","):
+        tok = _unquote(tok.strip(), where)
+        out.append(tok)
+    return out
+
+
+def parse_manifest(text: str) -> Manifest:
+    """Parse `app.md` frontmatter under the v0 key allowlists.
+
+    Deliberately extracts `app`, `title`, `version`, `summary`,
+    `needs.connections`, `needs.views.contract` and
+    `needs.bindings.contract`. Unknown or later-stage keys refuse.
+    """
+    yaml, _body = _split_front(text)
+    fields: dict[str, str | None] = {}
+    needs: dict[str, str] = {}
+    seen_fields: set[str] = set()
+    seen_needs: set[str] = set()
+    in_needs = False
+    in_listing = False
+    # Indent of `needs:` children; `needs.views:`/`needs.bindings:` may
+    # carry one nested `contract:` line deeper than that indent.
+    needs_child_indent: int | None = None
+    needs_sub: str | None = None
+    for raw_line in yaml.splitlines():
+        if not raw_line.strip() or raw_line.lstrip().startswith("#"):
+            continue
+        if "\t" in raw_line[: len(raw_line) - len(raw_line.lstrip())]:
+            # serde_yaml refuses a tab as indentation; match that here.
+            raise PackageError(f"{MANIFEST} frontmatter: tab indentation refuses")
+        indented = raw_line[0] == " "
+        line = raw_line.strip()
+        if not indented:
+            in_needs = False
+            in_listing = False
+            needs_sub = None
+            if ":" not in line:
+                raise PackageError(
+                    f"{MANIFEST} frontmatter line is not a `key: value` — {line!r}"
+                )
+            key, _, value = line.partition(":")
+            key = key.strip()
+            if key in seen_fields:
+                raise PackageError(
+                    f"{MANIFEST} frontmatter key '{key}' is declared twice"
+                )
+            seen_fields.add(key)
+            if key in GATED_KEYS:
+                raise PackageError(
+                    f"{MANIFEST} frontmatter key '{key}' is a later stage "
+                    "(A2/A3) — v0 installs app.md + workflows/ + optional "
+                    "rubrics/, templates/, views/ only"
+                )
+            if key not in MANIFEST_KEYS:
+                raise PackageError(
+                    f"{MANIFEST} frontmatter key '{key}' is unknown — v0 knows "
+                    f"{', '.join(MANIFEST_KEYS)}; anything else can never be installed"
+                )
+            if key == "listing":
+                # The host validates the listing shape; this offline
+                # checker only admits the top-level key and its nested
+                # display fields.
+                in_listing = True
+                continue
+            if key == "needs":
+                # `needs:` holds a mapping — a null/empty/scalar value
+                # refuses like the host's `needs is a mapping` error.
+                if value.strip() and value.strip() != "{}":
+                    raise PackageError(
+                        f"{MANIFEST} `needs:` is a mapping — v0 knows "
+                        "needs.connections, needs.capabilities, needs.views, "
+                        "needs.bindings"
+                    )
+                in_needs = True
+                if value.strip() == "{}":
+                    seen_needs.add("{}")  # explicit empty map: children are a dup
+                continue
+            fields[key] = _unquote(value, f"{MANIFEST} `{key}:`")
+            # serde_yaml reads `app: 123` / `title: true` as int/bool,
+            # not a string — `as_str()` is None and the host refuses.
+            # Refuse the obvious non-string scalars here so the field
+            # never pretends to be a string.
+            _refuse_nonstring_scalar(key, fields[key])
+        elif in_listing:
+            continue
+        elif in_needs:
+            indent = len(raw_line) - len(raw_line.lstrip())
+            if needs_child_indent is None:
+                needs_child_indent = indent
+            if ":" not in line:
+                raise PackageError(
+                    f"{MANIFEST} `needs:` entry is not a `key: value` — {line!r}"
+                )
+            key, _, value = line.partition(":")
+            key = key.strip()
+            if indent > needs_child_indent:
+                if needs_sub is None or key != ("contracts" if needs_sub == "requires" else "contract"):
+                    raise PackageError(
+                        f"{MANIFEST} `needs.{needs_sub}` knows only `contract`"
+                        if needs_sub
+                        else f"{MANIFEST} frontmatter: nested content is only "
+                        "supported under `needs.views`/`needs.bindings`"
+                    )
+                if needs[needs_sub]:
+                    raise PackageError(f"{MANIFEST} duplicate nested needs.{needs_sub} field")
+                needs[needs_sub] = f"{key}:{value.strip()}"
+                continue
+            needs_sub = None
+            if key not in NEEDS_KEYS:
+                raise PackageError(
+                    f"{MANIFEST} `needs.{key}` is unknown — v0 knows "
+                    "needs.connections, needs.capabilities, needs.views, "
+                    "needs.bindings"
+                )
+            if key in seen_needs:
+                raise PackageError(
+                    f"{MANIFEST} `needs.{key}` is declared twice"
+                )
+            seen_needs.add(key)
+            needs[key] = value.strip()
+            if value.strip() == "" and key in ("views", "bindings", "requires"):
+                needs_sub = key  # may carry a nested `contract:` line
+        else:
+            raise PackageError(
+                f"{MANIFEST} frontmatter: nested content is only supported "
+                "under `needs:`"
+            )
+
+    # A bare `needs:` that produced no children is a null scalar on the
+    # host (`needs is a mapping` → refuse), not an empty mapping.
+    if in_needs and "{}" not in seen_needs and not needs:
+        raise PackageError(
+            f"{MANIFEST} `needs:` is a mapping — v0 knows "
+            "needs.connections, needs.capabilities, needs.views, needs.bindings"
+        )
+
+    def need(key: str, what: str) -> str:
+        value = fields.get(key)
+        if value is None or not value.strip():
+            raise PackageError(f"{MANIFEST} needs `{key}:` — {what}")
+        return value.strip()
+
+    app = need("app", "the app name — the folder it installs as")
+    _check_tag(app, "app name")
+    title = need("title", "one line naming the app")
+    version = need("version", "a version string like 0.1.0")
+    for key, cap in (("title", 120), ("version", 40)):
+        value = title if key == "title" else version
+        if len(value) > cap or any(ord(c) < 0x20 or ord(c) == 0x7F for c in value):
+            raise PackageError(
+                f"{MANIFEST} `{key}:` — ≤{cap} chars, no control characters"
+            )
+    summary = fields.get("summary")
+    if summary is not None:
+        summary = summary.strip()
+        if not summary:
+            summary = None
+        elif len(summary) > 160 or any(ord(c) < 0x20 or ord(c) == 0x7F for c in summary):
+            raise PackageError(
+                f"{MANIFEST} `summary:` — ≤160 chars, no control characters"
+            )
+
+    requires = ()
+    if "requires" in needs:
+        value = needs["requires"]
+        if not value.startswith("contracts:"):
+            raise PackageError("packaging supports needs.requires.contracts as a block with an inline name-to-majors map")
+        raw = value.removeprefix("contracts:").strip()
+        if not (raw.startswith("{") and raw.endswith("}")):
+            raise PackageError("needs.requires.contracts must be an inline mapping")
+        entries = re.findall(r"([a-z0-9][a-z0-9-]{0,31}):\s*\[([0-9, ]+)\]", raw[1:-1])
+        remainder = re.sub(r"[a-z0-9][a-z0-9-]{0,31}:\s*\[[0-9, ]+\]", "", raw[1:-1])
+        if not entries or len(entries) > 16 or remainder.strip(" ,"):
+            raise PackageError("invalid needs.requires.contracts mapping")
+        names = set()
+        parsed = []
+        for name, numbers in entries:
+            if not re.fullmatch(r"\s*[1-9][0-9]*(?:\s*,\s*[1-9][0-9]*)*\s*", numbers):
+                raise PackageError("required majors are positive integers with no empty entries")
+            majors = tuple(int(n.strip()) for n in numbers.split(","))
+            if name in names or not 1 <= len(majors) <= 8 or min(majors) < 1 or len(set(majors)) != len(majors):
+                raise PackageError("duplicate or invalid required contract/major")
+            names.add(name)
+            parsed.append((name, majors))
+        requires = tuple(parsed)
+    connections: list[str] = []
+    view_contract = None
+    binding_contract = None
+    if "views" in needs:
+        view_contract = _needs_contract(needs["views"], "views", VIEW_CONTRACT)
+    if "bindings" in needs:
+        binding_contract = _needs_contract(needs["bindings"], "bindings", BINDING_CONTRACT)
+    if "capabilities" in needs:
+        # The shape mirror does not decode capability declarations —
+        # the host validates them — but an empty flow map is still a
+        # declared empty set and valid. A bare `capabilities:` (empty
+        # value) is a null, which the host reads as a mapping — refuse
+        # it rather than claim typed parity.
+        if needs["capabilities"] not in ("{}",):
+            raise PackageError(
+                f"{MANIFEST} `needs.capabilities` declarations are validated "
+                "by the host; this packaging check accepts only an empty "
+                "`needs.capabilities: {{}}` (or its absence)"
+            )
+    if "connections" in needs:
+        for slot in _flow_strings(needs["connections"], f"{MANIFEST} `needs.connections`"):
+            _check_tag(slot, "connection slot")
+            if slot in connections:
+                raise PackageError(f"connection slot '{slot}' is declared twice")
+            connections.append(slot)
+
+    return Manifest(
+        app=app,
+        title=title,
+        version=version,
+        summary=summary,
+        connections=tuple(connections),
+        view_contract=view_contract,
+        binding_contract=binding_contract,
+        requires=requires,
+    )
+
+
+def _needs_contract(value: str, key: str, expected: str) -> str:
+    """Read `contract: <value>` out of a `needs.<key>` inline/block map."""
+    value = value.strip()
+    if value.startswith("{"):
+        inner = value.strip("{}").strip()
+        parts = dict(
+            p.strip().split(":", 1) for p in inner.split(",") if p.strip()
+        )
+        contract = parts.get("contract", "").strip()
+        if set(parts) != {"contract"} or not contract:
+            raise PackageError(f"{MANIFEST} `needs.{key}` knows only `contract`")
+    elif value.startswith("contract:"):
+        contract = value.split(":", 1)[1].strip()
+    elif value == "" or value == "{":
+        raise PackageError(
+            f"{MANIFEST} `needs.{key}` is a mapping — `contract: {expected}`"
+        )
+    else:
+        raise PackageError(f"{MANIFEST} `needs.{key}` knows only `contract`")
+    contract = contract.strip("'\"")
+    if contract != expected:
+        raise PackageError(
+            f"{MANIFEST} `needs.{key}.contract` is exactly `{expected}` — "
+            "the contract the bundle's descriptor/companion file declares"
+        )
+    return contract
+
+
+def _check_tag(name: str, what: str) -> None:
+    if not TAG_RE.match(name):
+        raise PackageError(
+            f"{what} '{name}' — 1-32 lowercase letters, digits or hyphens"
+        )
+
+
+def _check_version_semver(version: str, path: Path | None = None) -> None:
+    """Release naming wants `0.1.0` semantics: exactly three ints.
+
+    The host only requires a non-empty ≤40-char version string; the
+    archive name is stricter on purpose so a release is always
+    sortable. A manifest version outside semver is rejected by
+    `build`/`verify` with a clear error, not silently renamed.
+    """
+    if not VERSION_RE.match(version):
+        raise PackageError(
+            f"{MANIFEST} version '{version}' — release archives need a "
+            "major.minor.patch version like 0.1.0 (the host accepts any "
+            "short string; the archive name is deliberately stricter)"
+        )
+
+
+# --- Bundle file inventory (mirrors host bundle_files shape rules) ----
+
+
+def bundle_files(root: Path) -> list[str]:
+    """Return the sorted relative file list of a valid bundle tree.
+
+    Mirrors `bundle_files()` in the host loader: the root is a real
+    directory (never a symlink), `app.md` and `workflows/` are
+    required, only TOP_DIRS are allowed beside it, dirs are flat,
+    dotfiles/symlinks/non-regular files refuse, non-UTF-8 names
+    refuse, and file count/size bounds apply.
+    """
+    try:
+        st = os.lstat(root)
+    except OSError as e:
+        raise PackageError(f"cannot stat app source {root}: {e}") from e
+    if stat.S_ISLNK(st.st_mode):
+        raise PackageError(f"app source {root} is a symlink — an app is a real folder")
+    if not stat.S_ISDIR(st.st_mode):
+        raise PackageError(f"app source {root} is not a folder")
+
+    files: list[str] = []
+    dirs: list[str] = []
+    manifest = False
+    for entry in sorted(os.scandir(root), key=lambda e: e.name):
+        name = entry.name
+        _check_utf8_name(name, "app source")
+        if name.startswith("."):
+            if name == ".git":
+                continue  # a clone's .git is never app content
+            raise PackageError(f"app source entry '{name}': dotfiles are not app content")
+        if entry.is_symlink():
+            raise PackageError(
+                f"app source entry '{name}': a symlink — an app folder holds "
+                "real files only"
+            )
+        if entry.is_file(follow_symlinks=False):
+            if name == MANIFEST:
+                manifest = True
+                files.append(name)
+                continue
+            if name in ROOT_DESCRIPTORS:
+                files.append(name)
+                continue
+            raise PackageError(
+                f"app source entry '{name}' — this package tool admits app.md, the known "
+                "root descriptors, workflows/, rubrics/, templates/, "
+                "views/, bindings/, screens/ and storage/; everything else refuses"
+            )
+        if entry.is_dir(follow_symlinks=False):
+            if name in TOP_DIRS:
+                dirs.append(name)
+                continue
+            raise PackageError(
+                f"app source entry '{name}' — this package tool admits app.md, the known "
+                "root descriptors, workflows/, rubrics/, templates/, "
+                "views/, bindings/, screens/ and storage/; everything else refuses"
+            )
+        raise PackageError(f"app source entry '{name}': not a regular file")
+
+    if not manifest:
+        raise PackageError(
+            f"app source {root} has no app.md — frontmatter `app`, `title`, "
+            "`version` and the agent guide are required"
+        )
+    if "workflows" not in dirs:
+        raise PackageError(
+            "an app needs workflows/ — the workflows it bundles; an app with "
+            "none installs nothing runnable"
+        )
+
+    for top in dirs:
+        if top == "screens":
+            tags = sorted(os.scandir(root / top), key=lambda e: e.name)
+            if len(tags) != 1 or tags[0].name != "hr" or tags[0].is_symlink() or not tags[0].is_dir(follow_symlinks=False):
+                raise PackageError("screens/ holds only the real hr/ screen directory")
+            for entry in sorted(os.scandir(root / "screens/hr"), key=lambda e: e.name):
+                rel = f"screens/hr/{entry.name}"
+                if entry.is_symlink() or not entry.is_file(follow_symlinks=False) or not screen_leaf(entry.name):
+                    raise PackageError(f"invalid screen member {rel}")
+                files.append(rel)
+            continue
+        for entry in sorted(os.scandir(root / top), key=lambda e: e.name):
+            name = entry.name
+            rel = f"{top}/{name}"
+            _check_utf8_name(name, top)
+            if name.startswith("."):
+                raise PackageError(f"app source entry '{rel}': dotfiles are not app content")
+            if entry.is_symlink():
+                raise PackageError(
+                    f"app source entry '{rel}': a symlink — an app folder "
+                    "holds real files only"
+                )
+            if entry.is_dir(follow_symlinks=False):
+                raise PackageError(
+                    f"app source entry '{rel}': v0 app dirs are flat — no nested folders"
+                )
+            if not entry.is_file(follow_symlinks=False):
+                raise PackageError(f"app source entry '{rel}': not a regular file")
+            if top == "storage":
+                if not name.endswith(".json") or not STORAGE_PATH_RE.fullmatch(rel):
+                    raise PackageError(
+                        f"app source entry '{rel}': storage holds flat "
+                        "`storage/<tag>.json` migration files only"
+                    )
+            if top == "workflows":
+                if not name.endswith(".md"):
+                    raise PackageError(
+                        f"app source entry '{rel}': workflows are plan-template "
+                        "files ending in .md"
+                    )
+                _check_tag(name[: -len(".md")], "workflow name")
+            if top == "views" and name != VIEWS_FILE:
+                raise PackageError(
+                    f"app source entry '{rel}': views/ holds exactly {VIEWS_FILE}"
+                )
+            if top == "bindings" and name != BINDINGS_FILE:
+                raise PackageError(
+                    f"app source entry '{rel}': bindings/ holds exactly {BINDINGS_FILE}"
+                )
+            files.append(rel)
+
+    if len(files) > MAX_FILES:
+        raise PackageError(f"app carries {len(files)} files — at most {MAX_FILES}")
+    total = 0
+    for rel in files:
+        size = os.lstat(root / rel).st_size
+        if size > file_cap(rel):
+            raise PackageError(f"{rel} is {size} bytes — a file is at most {file_cap(rel)}")
+        total += size
+        if total > MAX_APP_BYTES:
+            raise PackageError(f"app is over {MAX_APP_BYTES} bytes of content — split it")
+    files.sort()
+    return files
+
+
+def screen_leaf(name: str) -> bool:
+    return name == "screens.json" or re.fullmatch(r"[a-z0-9][a-z0-9-]{0,31}\.(js|css|svg|json)", name) is not None
+
+
+def file_cap(rel: str) -> int:
+    if rel == STORAGE_DESCRIPTOR:
+        return MAX_STORAGE_DESCRIPTOR_BYTES
+    if rel.startswith(f"{STORAGE_DIR}/"):
+        return MAX_MIGRATION_BYTES
+    if rel.startswith("screens/hr/") and rel.count("/") == 2:
+        if rel == "screens/hr/screens.json":
+            return 32768
+        return 2097152
+    return MAX_FILE_BYTES
+
+
+def check_screen_bytes(contents: list[tuple[str, bytes]], where: str) -> None:
+    screen = {rel.removeprefix("screens/hr/"): data for rel, data in contents if rel.startswith("screens/hr/")}
+    if not screen:
+        return
+    def closed_pairs(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise PackageError(f"{where}: duplicate screen JSON field {key}")
+            result[key] = value
+        return result
+    try:
+        raw = screen.pop("screens.json")
+        if len(raw) > 32768:
+            raise PackageError("screen manifest exceeds 32768 bytes")
+        decl = json.loads(raw.decode("utf-8"), object_pairs_hook=closed_pairs)
+        assets = decl["assets"]
+        if decl["app"] != "hr" or decl["contract"] != "app-screens/v2" or decl["host_contract"] != "screen-records.v1" or decl["entry"] != "client.js":
+            raise PackageError("HR screen contract mismatch")
+        if not isinstance(assets, list) or not 1 <= len(assets) <= 32 or sum(map(len, screen.values())) > 2097152:
+            raise PackageError("screen asset count/total exceeds bounds")
+        names = set()
+        media = {"js": "text/javascript", "css": "text/css", "svg": "image/svg+xml", "json": "application/json"}
+        for asset in assets:
+            name = asset["name"]
+            if set(asset) != {"name", "size", "sha256", "media_type"} or name in names or not screen_leaf(name) or name == "screens.json":
+                raise PackageError("invalid/duplicate screen asset")
+            names.add(name)
+            data = screen[name]
+            text = data.decode("utf-8")
+            if name.endswith(".js") and re.search(r"</script|<!--|-->", text, re.IGNORECASE):
+                raise PackageError(f"unsafe inline screen script: {name}")
+            if type(asset["size"]) is not int or asset["size"] != len(data) or len(data) > file_cap("screens/hr/" + name) or asset["sha256"] != "sha256:" + sha256_hex(data) or asset["media_type"] != media[name.rsplit(".", 1)[1]]:
+                raise PackageError(f"screen asset integrity mismatch: {name}")
+        if names != set(screen) or "client.js" not in names:
+            raise PackageError("missing/unspecified screen assets")
+        if "startup" in decl:
+            startup = decl["startup"]
+            scripts = {a["name"] for a in assets if a["media_type"] == "text/javascript"}
+            if not isinstance(startup, list) or not 2 <= len(startup) <= 32 or any(not isinstance(n, str) for n in startup) or len(set(startup)) != len(startup) or set(startup) != scripts or startup[-1] != decl["entry"]:
+                raise PackageError("startup must name all JavaScript assets once, entry last")
+            manifest = parse_manifest(dict(contents)[MANIFEST].decode("utf-8"))
+            if ("screen-startup", (1,)) not in manifest.requires:
+                raise PackageError("startup requires needs.requires.contracts screen-startup: [1]")
+    except (KeyError, TypeError, ValueError, UnicodeDecodeError) as e:
+        raise PackageError(f"{where}: invalid screen declaration: {e}") from e
+
+
+def _check_utf8_name(name: str, where: str) -> None:
+    try:
+        name.encode("utf-8")
+    except UnicodeEncodeError as e:
+        raise PackageError(f"{where} carries a file name that is not UTF-8") from e
+
+
+def _storage_json(raw: bytes, where: str, rel: str) -> object:
+    """Decode one storage member; closed maps refuse duplicate keys."""
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError as e:
+        raise PackageError(f"{where}: {rel}: not UTF-8 text") from e
+
+    def closed(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError(f"duplicate field {key}")
+            result[key] = value
+        return result
+
+    try:
+        return json.loads(text, object_pairs_hook=closed)
+    except ValueError as e:
+        raise PackageError(f"{where}: {rel}: not valid JSON — {e}") from e
+
+
+def _is_int(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _is_number(value: object) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _is_scalar(value: object) -> bool:
+    return value is None or isinstance(value, (str, int, float, bool))
+
+
+def _scalar_matches(value: object, ctype: str) -> bool:
+    if ctype == "text":
+        return isinstance(value, str)
+    if ctype == "integer":
+        return _is_int(value)
+    if ctype == "real":
+        return _is_number(value)
+    if ctype == "boolean":
+        return isinstance(value, bool)
+    return False
+
+
+def _enum_matches(value: object, enum: list) -> bool:
+    # Python equates True and 1; a boolean/digest enum entry must match type too.
+    return any(type(value) is type(item) and value == item for item in enum)
+
+
+def _storage_value_ok(value: object, column: dict, where: str, what: str) -> None:
+    """Typed default/value validation for a declared column."""
+    ctype = column["type"]
+    if ctype == "json":
+        # Parsed JSON is bounded serializable data by construction.
+        return
+    if value is None:
+        return
+    if not _scalar_matches(value, ctype):
+        raise PackageError(f"{where}: {what} does not match column type '{ctype}'")
+    cap = column.get("max_length")
+    if ctype == "text" and cap is not None and len(value) > cap:
+        raise PackageError(f"{where}: {what} exceeds max_length {cap}")
+    if "enum" in column and not _enum_matches(value, column["enum"]):
+        raise PackageError(f"{where}: {what} is not one of the declared enum values")
+
+
+def _storage_json_schema(schema: object, where: str, what: str) -> None:
+    """Bounded admission for a standard JSON Schema declaration.
+
+    This mirrors the supported subset's shape/bounds only — it never
+    evaluates a schema or coerces a value. Final keyword admission stays
+    with the host's app-storage validation module; a packaging PASS only
+    proves the declaration is a bounded JSON object/boolean.
+    """
+    if isinstance(schema, bool):
+        return
+    if not isinstance(schema, dict):
+        raise PackageError(f"{where}: {what} is a JSON Schema object or boolean")
+    try:
+        encoded = json.dumps(schema, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    except (TypeError, ValueError) as e:
+        raise PackageError(f"{where}: {what} is not serializable JSON — {e}") from e
+    if len(encoded) > MAX_JSON_SCHEMA_BYTES:
+        raise PackageError(
+            f"{where}: {what} exceeds {MAX_JSON_SCHEMA_BYTES} bytes"
+        )
+    nodes = 0
+
+    def walk(node: object, depth: int) -> None:
+        nonlocal nodes
+        if depth > MAX_JSON_SCHEMA_DEPTH:
+            raise PackageError(
+                f"{where}: {what} nests deeper than {MAX_JSON_SCHEMA_DEPTH}"
+            )
+        nodes += 1
+        if nodes > MAX_JSON_SCHEMA_NODES:
+            raise PackageError(
+                f"{where}: {what} exceeds {MAX_JSON_SCHEMA_NODES} schema nodes"
+            )
+        if isinstance(node, bool):
+            return
+        if not isinstance(node, dict):
+            raise PackageError(f"{where}: {what} has a non-schema value where a schema is required")
+        for key, value in node.items():
+            if key not in JSON_SCHEMA_KEYWORDS:
+                raise PackageError(
+                    f"{where}: {what} uses unsupported JSON Schema keyword {key!r}"
+                )
+            if key in JSON_SCHEMA_SINGLE:
+                walk(value, depth + 1)
+            elif key in JSON_SCHEMA_ARRAY:
+                if not isinstance(value, list) or not 1 <= len(value) <= 16:
+                    raise PackageError(
+                        f"{where}: {what} keyword {key!r} carries 1–16 schemas"
+                    )
+                for item in value:
+                    walk(item, depth + 1)
+            elif key == "properties":
+                if not isinstance(value, dict) or len(value) > 64:
+                    raise PackageError(
+                        f"{where}: {what} properties is an object of at most 64 schemas"
+                    )
+                for name, child in value.items():
+                    if (
+                        not isinstance(name, str)
+                        or len(name) > 64
+                        or any(ord(c) < 0x20 or ord(c) > 0x7E for c in name)
+                        or name in ("__proto__", "constructor", "prototype")
+                    ):
+                        raise PackageError(
+                            f"{where}: {what} has an unsupported property name"
+                        )
+                    walk(child, depth + 1)
+            elif key == "type":
+                if value not in JSON_SCHEMA_TYPES:
+                    raise PackageError(
+                        f"{where}: {what} type is one of {JSON_SCHEMA_TYPES}"
+                    )
+            elif key == "enum":
+                if (
+                    not isinstance(value, list)
+                    or not 1 <= len(value) <= 64
+                    or any(not _is_scalar(item) for item in value)
+                    or len({json.dumps(item, sort_keys=True) for item in value}) != len(value)
+                ):
+                    raise PackageError(
+                        f"{where}: {what} enum is 1–64 unique scalars"
+                    )
+            elif key == "const":
+                if not _is_scalar(value):
+                    raise PackageError(f"{where}: {what} const is a scalar")
+            elif key == "required":
+                if (
+                    not isinstance(value, list)
+                    or len(value) > 64
+                    or any(not isinstance(item, str) or len(item) > 64 for item in value)
+                ):
+                    raise PackageError(
+                        f"{where}: {what} required is at most 64 property names"
+                    )
+            elif key == "additionalProperties":
+                if isinstance(value, bool):
+                    pass
+                else:
+                    walk(value, depth + 1)
+            elif key in ("minItems", "maxItems", "minLength", "maxLength"):
+                if not _is_int(value) or value < 0:
+                    raise PackageError(f"{where}: {what} {key} is a non-negative integer")
+            elif key == "uniqueItems":
+                if not isinstance(value, bool):
+                    raise PackageError(f"{where}: {what} uniqueItems is a boolean")
+            elif key in ("minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum"):
+                if not _is_number(value):
+                    raise PackageError(f"{where}: {what} {key} is a number")
+            elif key == "pattern":
+                if not isinstance(value, str) or len(value) > 256:
+                    raise PackageError(f"{where}: {what} pattern is a bounded string")
+        if "then" in node or "else" in node:
+            if "if" not in node:
+                raise PackageError(f"{where}: {what} then/else requires if")
+        if "if" in node and "then" not in node and "else" not in node:
+            raise PackageError(f"{where}: {what} if requires then or else")
+
+    walk(schema, 1)
+
+
+def _storage_column(column: object, where: str, table: str) -> dict:
+    """Validate one closed Column object; return it for the logical model."""
+    if not isinstance(column, dict):
+        raise PackageError(f"{where}: table '{table}' column is not an object")
+    unknown = set(column) - set(COLUMN_KEYS)
+    if unknown:
+        raise PackageError(
+            f"{where}: column has unknown field(s) {sorted(unknown)} — the column grammar is closed"
+        )
+    for key in ("name", "type", "nullable"):
+        if key not in column:
+            raise PackageError(f"{where}: every column declares name/type/nullable")
+    name = column["name"]
+    if not isinstance(name, str) or not STORAGE_IDENT_RE.fullmatch(name):
+        raise PackageError(f"{where}: column name is not a lowercase identifier")
+    if name in HOST_COLUMNS:
+        raise PackageError(
+            f"{where}: column '{name}' is host-owned and cannot be declared by an app"
+        )
+    ctype = column["type"]
+    if ctype not in COLUMN_TYPES:
+        raise PackageError(f"{where}: column '{name}' has unsupported type {ctype!r}")
+    if not isinstance(column["nullable"], bool):
+        raise PackageError(f"{where}: column '{name}' nullable is a boolean")
+    if "max_length" in column:
+        cap = column["max_length"]
+        if not _is_int(cap) or cap < 1 or ctype != "text":
+            raise PackageError(
+                f"{where}: column '{name}' max_length is a positive integer on a text column"
+            )
+    if "enum" in column:
+        enum = column["enum"]
+        if ctype == "json" or not isinstance(enum, list) or not 1 <= len(enum) <= 32:
+            raise PackageError(
+                f"{where}: column '{name}' enum is 1–32 scalar values on a scalar column"
+            )
+        seen = []
+        for item in enum:
+            if item is None or not _scalar_matches(item, ctype):
+                raise PackageError(
+                    f"{where}: column '{name}' enum entry does not match type '{ctype}'"
+                )
+            if _enum_matches(item, seen):
+                raise PackageError(f"{where}: column '{name}' enum repeats an entry")
+            seen.append(item)
+    if "default" in column:
+        value = column["default"]
+        if value is None and not column["nullable"]:
+            raise PackageError(
+                f"{where}: column '{name}' is non-null and cannot default to null"
+            )
+        _storage_value_ok(value, column, where, f"column '{name}' default")
+    if "format" in column:
+        if ctype != "text" or column["format"] not in COLUMN_FORMATS:
+            raise PackageError(
+                f"{where}: column '{name}' format is email, phone or tag on a text column"
+            )
+    if "json_schema" in column:
+        # The host's app-storage contract (packages/contracts/src/app-storage.ts) admits a
+        # json_schema on any column type; HR bounds its text dates with a pattern. This
+        # offline mirror was stricter than the host and is widened to match it.
+        if ctype not in ("json", "text"):
+            raise PackageError(
+                f"{where}: column '{name}' json_schema applies to a json or text column"
+            )
+        _storage_json_schema(column["json_schema"], where, f"column '{name}' json_schema")
+    return column
+
+
+def _storage_apply_op(model: dict, op: object, where: str, migration: str) -> None:
+    """Accumulate one operation against the pure logical model."""
+    if not isinstance(op, dict):
+        raise PackageError(f"{where}: {migration}: operation is not an object")
+    kind = op.get("op")
+    if kind == "create_table":
+        if set(op) not in (
+            {"op", "table", "columns"},
+            {"op", "table", "columns", "record_bytes"},
+        ):
+            raise PackageError(
+                f"{where}: {migration}: create_table fields are closed "
+                "(op, table, columns, optional record_bytes)"
+            )
+        table = op["table"]
+        if not isinstance(table, str) or not STORAGE_IDENT_RE.fullmatch(table):
+            raise PackageError(f"{where}: {migration}: table name is not a lowercase identifier")
+        record_bytes = op.get("record_bytes")
+        if "record_bytes" in op and (
+            not _is_int(record_bytes) or not 1 <= record_bytes <= MAX_RECORD_BYTES
+        ):
+            raise PackageError(
+                f"{where}: {migration}: record_bytes is a positive integer at most "
+                f"{MAX_RECORD_BYTES} (the host absolute record limit)"
+            )
+        if table in model:
+            raise PackageError(f"{where}: {migration}: table '{table}' is declared twice")
+        if len(model) >= MAX_STORAGE_TABLES:
+            raise PackageError(f"{where}: {migration}: more than {MAX_STORAGE_TABLES} tables")
+        columns = op["columns"]
+        if not isinstance(columns, list) or len(columns) > MAX_TABLE_COLUMNS:
+            raise PackageError(
+                f"{where}: {migration}: table '{table}' carries more than "
+                f"{MAX_TABLE_COLUMNS} columns"
+            )
+        declared: dict[str, dict] = {}
+        for column in columns:
+            entry = _storage_column(column, where, table)
+            if entry["name"] in declared:
+                raise PackageError(
+                    f"{where}: {migration}: table '{table}' repeats column '{entry['name']}'"
+                )
+            declared[entry["name"]] = entry
+        model[table] = {
+            "columns": declared,
+            "indexes": {},
+            "record_bytes": record_bytes,
+        }
+        return
+    if kind == "add_column":
+        if set(op) != {"op", "table", "column"}:
+            raise PackageError(f"{where}: {migration}: add_column fields are closed")
+        table = op["table"]
+        target = model.get(table) if isinstance(table, str) else None
+        if target is None:
+            raise PackageError(f"{where}: {migration}: add_column names unknown table {table!r}")
+        entry = _storage_column(op["column"], where, table)
+        if entry["name"] in target["columns"]:
+            raise PackageError(
+                f"{where}: {migration}: table '{table}' already declares column '{entry['name']}'"
+            )
+        # The table may hold rows; a non-null additive column needs a
+        # compatible default or the migration cannot be applied safely.
+        if not entry["nullable"] and "default" not in entry:
+            raise PackageError(
+                f"{where}: {migration}: non-null added column '{entry['name']}' "
+                "needs an explicit default"
+            )
+        if len(target["columns"]) >= MAX_TABLE_COLUMNS:
+            raise PackageError(
+                f"{where}: {migration}: table '{table}' would exceed {MAX_TABLE_COLUMNS} columns"
+            )
+        target["columns"][entry["name"]] = entry
+        return
+    if kind == "create_index":
+        if set(op) != {"op", "table", "name", "columns", "unique"}:
+            raise PackageError(f"{where}: {migration}: create_index fields are closed")
+        table = op["table"]
+        target = model.get(table) if isinstance(table, str) else None
+        if target is None:
+            raise PackageError(f"{where}: {migration}: index names unknown table {table!r}")
+        name = op["name"]
+        if not isinstance(name, str) or not STORAGE_IDENT_RE.fullmatch(name):
+            raise PackageError(f"{where}: {migration}: index name is not a lowercase identifier")
+        if name in target["indexes"]:
+            raise PackageError(f"{where}: {migration}: table '{table}' repeats index '{name}'")
+        if not isinstance(op["unique"], bool):
+            raise PackageError(f"{where}: {migration}: index '{name}' unique is a boolean")
+        columns = op["columns"]
+        if not isinstance(columns, list) or not 1 <= len(columns) <= MAX_TABLE_COLUMNS:
+            raise PackageError(f"{where}: {migration}: index '{name}' carries 1–{MAX_TABLE_COLUMNS} columns")
+        seen: list[str] = []
+        for column in columns:
+            if not isinstance(column, str) or column not in target["columns"]:
+                raise PackageError(
+                    f"{where}: {migration}: index '{name}' names undeclared column {column!r}"
+                )
+            if column in seen:
+                raise PackageError(f"{where}: {migration}: index '{name}' repeats a column")
+            seen.append(column)
+        if len(target["indexes"]) >= MAX_TABLE_INDEXES:
+            raise PackageError(
+                f"{where}: {migration}: table '{table}' would exceed {MAX_TABLE_INDEXES} indexes"
+            )
+        target["indexes"][name] = {"columns": seen, "unique": op["unique"]}
+        return
+    if kind == "backfill":
+        if set(op) != {"op", "table", "column", "value", "only_null"}:
+            raise PackageError(f"{where}: {migration}: backfill fields are closed")
+        table = op["table"]
+        target = model.get(table) if isinstance(table, str) else None
+        if target is None:
+            raise PackageError(f"{where}: {migration}: backfill names unknown table {table!r}")
+        column = op["column"]
+        entry = target["columns"].get(column) if isinstance(column, str) else None
+        if entry is None:
+            raise PackageError(f"{where}: {migration}: backfill names undeclared column {column!r}")
+        if not isinstance(op["only_null"], bool):
+            raise PackageError(f"{where}: {migration}: backfill only_null is a boolean")
+        value = op["value"]
+        if value is not None and not _scalar_matches(value, entry["type"]) and entry["type"] != "json":
+            raise PackageError(f"{where}: {migration}: backfill value does not match '{column}'")
+        _storage_value_ok(value, entry, where, f"backfill value for '{column}'")
+        return
+    raise PackageError(f"{where}: {migration}: unknown storage operation {kind!r}")
+
+
+def _check_app_storage(
+    contents: list[tuple[str, bytes]], where: str, app: str | None = None
+) -> None:
+    """Validate the app-storage descriptor and its raw-byte-checksummed plan.
+
+    Mirrors the AOS-384 wire contract offline: closed descriptor/migration
+    objects, contiguous versions through `schema_version`, a declared
+    default table, and every migration file present with the exact
+    declared sha256. A PASS is member/grammar integrity only — it never
+    proves that a host executes the plan.
+    """
+    mapping = dict(contents)
+    storage_paths = sorted(rel for rel in mapping if rel.startswith(f"{STORAGE_DIR}/"))
+    if STORAGE_DESCRIPTOR not in mapping:
+        if storage_paths:
+            raise PackageError(
+                f"{where}: storage/ migration files exist without {STORAGE_DESCRIPTOR} — "
+                "an undeclared plan can never install"
+            )
+        return
+    raw = mapping[STORAGE_DESCRIPTOR]
+    if len(raw) > MAX_STORAGE_DESCRIPTOR_BYTES:
+        raise PackageError(
+            f"{where}: {STORAGE_DESCRIPTOR} exceeds {MAX_STORAGE_DESCRIPTOR_BYTES} bytes"
+        )
+    doc = _storage_json(raw, where, STORAGE_DESCRIPTOR)
+    if not isinstance(doc, dict):
+        raise PackageError(f"{where}: {STORAGE_DESCRIPTOR} is not a JSON object")
+    unknown = set(doc) - set(STORAGE_DESCRIPTOR_KEYS)
+    missing = set(STORAGE_DESCRIPTOR_KEYS) - set(doc) - set(OPTIONAL_DESCRIPTOR_KEYS)
+    if unknown or missing:
+        raise PackageError(
+            f"{where}: {STORAGE_DESCRIPTOR} fields are closed — "
+            f"expected {sorted(set(STORAGE_DESCRIPTOR_KEYS) - set(OPTIONAL_DESCRIPTOR_KEYS))} "
+            f"and optional {sorted(OPTIONAL_DESCRIPTOR_KEYS)}"
+        )
+    if doc["contract"] != STORAGE_CONTRACT:
+        raise PackageError(
+            f'{where}: {STORAGE_DESCRIPTOR} contract must be "{STORAGE_CONTRACT}"'
+        )
+    descriptor_app = doc["app"]
+    if not isinstance(descriptor_app, str) or not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,31}", descriptor_app):
+        raise PackageError(f"{where}: {STORAGE_DESCRIPTOR} app is not a tag")
+    if app is not None and descriptor_app != app:
+        raise PackageError(
+            f"{where}: {STORAGE_DESCRIPTOR} declares app '{descriptor_app}' but "
+            f"the manifest installs '{app}'"
+        )
+    record_kind = doc["record_kind"]
+    if not isinstance(record_kind, str) or not RECORD_KIND_RE.fullmatch(record_kind):
+        raise PackageError(
+            f"{where}: {STORAGE_DESCRIPTOR} record_kind is a lowercase bounded identifier"
+        )
+    if "record_write_schema" in doc:
+        _storage_json_schema(
+            doc["record_write_schema"],
+            where,
+            f"{STORAGE_DESCRIPTOR} record_write_schema",
+        )
+    schema_version = doc["schema_version"]
+    if not _is_int(schema_version) or not 1 <= schema_version <= MAX_MIGRATIONS:
+        raise PackageError(
+            f"{where}: {STORAGE_DESCRIPTOR} schema_version is a positive integer "
+            f"(at most {MAX_MIGRATIONS})"
+        )
+    compatible = doc["compatible_schema_versions"]
+    if (
+        not isinstance(compatible, list)
+        or not 1 <= len(compatible) <= 16
+        or any(not _is_int(v) or not 1 <= v <= schema_version for v in compatible)
+        or len(set(compatible)) != len(compatible)
+        or schema_version not in compatible
+    ):
+        raise PackageError(
+            f"{where}: compatible_schema_versions lists unique versions up to and "
+            "including schema_version"
+        )
+    default_table = doc["default_table"]
+    if not isinstance(default_table, str) or not STORAGE_IDENT_RE.fullmatch(default_table):
+        raise PackageError(f"{where}: {STORAGE_DESCRIPTOR} default_table is not a lowercase identifier")
+
+    migrations = doc["migrations"]
+    if not isinstance(migrations, list) or len(migrations) != schema_version:
+        raise PackageError(
+            f"{where}: migrations list one contiguous file per version 1..{schema_version}"
+        )
+    declared_paths: list[str] = []
+    model: dict[str, dict] = {}
+    total_ops = 0
+    total_bytes = 0
+    for expected_version, entry in enumerate(migrations, start=1):
+        if not isinstance(entry, dict) or set(entry) != set(MIGRATION_KEYS):
+            raise PackageError(
+                f"{where}: {STORAGE_DESCRIPTOR} migration entries are closed "
+                "(version, path, sha256)"
+            )
+        version = entry["version"]
+        path = entry["path"]
+        digest = entry["sha256"]
+        if version != expected_version or not _is_int(version):
+            raise PackageError(
+                f"{where}: migration versions must be contiguous 1..{schema_version}"
+            )
+        if not isinstance(path, str) or not STORAGE_PATH_RE.fullmatch(path):
+            raise PackageError(
+                f"{where}: migration path {path!r} is not `storage/<tag>.json`"
+            )
+        if path in declared_paths:
+            raise PackageError(f"{where}: migration path '{path}' is declared twice")
+        declared_paths.append(path)
+        if path not in mapping:
+            raise PackageError(
+                f"{where}: migration '{path}' is declared but missing from the bundle"
+            )
+        data = mapping[path]
+        if len(data) > MAX_MIGRATION_BYTES:
+            raise PackageError(f"{where}: {path} exceeds {MAX_MIGRATION_BYTES} bytes")
+        total_bytes += len(data)
+        if total_bytes > MAX_STORAGE_BYTES:
+            raise PackageError(
+                f"{where}: migration files exceed {MAX_STORAGE_BYTES} combined bytes"
+            )
+        if (
+            not isinstance(digest, str)
+            or not re.fullmatch(r"sha256:[0-9a-f]{64}", digest)
+            or digest != f"sha256:{sha256_hex(data)}"
+        ):
+            raise PackageError(
+                f"{where}: {path}: declared sha256 does not match its exact bytes "
+                "— a missing or altered migration refuses packaging"
+            )
+        migration = _storage_json(data, where, path)
+        if not isinstance(migration, dict) or set(migration) != {"version", "operations"}:
+            raise PackageError(
+                f"{where}: {path}: a migration is a closed {{version, operations}} object"
+            )
+        if migration["version"] != version:
+            raise PackageError(f"{where}: {path}: declared and in-file version differ")
+        operations = migration["operations"]
+        if not isinstance(operations, list) or len(operations) > MAX_MIGRATION_OPS:
+            raise PackageError(
+                f"{where}: {path}: at most {MAX_MIGRATION_OPS} operations per migration"
+            )
+        total_ops += len(operations)
+        if total_ops > MAX_PLAN_OPS:
+            raise PackageError(
+                f"{where}: the plan carries more than {MAX_PLAN_OPS} operations"
+            )
+        for op in operations:
+            _storage_apply_op(model, op, where, path)
+
+    if sorted(declared_paths) != storage_paths:
+        extra = sorted(set(storage_paths) - set(declared_paths))
+        raise PackageError(
+            f"{where}: undeclared storage member(s) {extra} — every migration "
+            f"is named by {STORAGE_DESCRIPTOR}"
+        )
+    if default_table not in model:
+        raise PackageError(
+            f"{where}: default_table '{default_table}' is not declared by the migration plan"
+        )
+    if "record_search_columns" in doc:
+        search = doc["record_search_columns"]
+        target = model[default_table]["columns"]
+        if not isinstance(search, list) or not 1 <= len(search) <= MAX_TABLE_COLUMNS:
+            raise PackageError(
+                f"{where}: record_search_columns is 1–{MAX_TABLE_COLUMNS} logical column names"
+            )
+        seen: list[str] = []
+        for name in search:
+            if not isinstance(name, str) or not STORAGE_IDENT_RE.fullmatch(name):
+                raise PackageError(
+                    f"{where}: record_search_columns names must be lowercase identifiers"
+                )
+            column = target.get(name)
+            if column is None:
+                raise PackageError(
+                    f"{where}: record_search_columns names undeclared column {name!r} "
+                    f"on '{default_table}'"
+                )
+            if column["type"] not in ("text", "json"):
+                raise PackageError(
+                    f"{where}: record_search_columns column '{name}' must be text or json"
+                )
+            if name in seen:
+                raise PackageError(f"{where}: record_search_columns repeats column '{name}'")
+            seen.append(name)
+
+
+def check_pairing(manifest: Manifest, files: list[str], where: str) -> None:
+    """Descriptor/companion files pair with their manifest declarations —
+    either alone refuses, both directions, same as the host. `files` is
+    the already shape-checked rel-path list (source or archive)."""
+    present = set(files)
+    if "app-actions.json" in present and "app-assistant.json" not in present:
+        raise PackageError(
+            f"{where}: app-actions.json carries no paired app-assistant.json — "
+            "the read tools it proposes from install together or not at all"
+        )
+    screen_members = [f for f in files if f.startswith("screens/")]
+    if screen_members:
+        if "screens/hr/screens.json" not in present or any((name, (1,)) not in manifest.requires for name in ("app-screens", "screen-records")):
+            raise PackageError(f"{where}: HR screen needs its declaration and needs.requires.contracts app-screens/screen-records: [1]")
+    elif any(name in ("screen-records", "screen-startup") for name, _ in manifest.requires):
+        raise PackageError(f"{where}: screen-records/startup demand requires an HR screen")
+    if manifest.view_contract and f"views/{VIEWS_FILE}" not in present:
+        raise PackageError(
+            f"{where}: app.md declares `needs.views` but the bundle carries no "
+            f"views/{VIEWS_FILE} — the declaration and the descriptor file "
+            "install together or not at all"
+        )
+    if manifest.binding_contract:
+        if f"bindings/{BINDINGS_FILE}" not in present:
+            raise PackageError(
+                f"{where}: app.md declares `needs.bindings` but the bundle carries no "
+                f"bindings/{BINDINGS_FILE}"
+            )
+        if not manifest.view_contract:
+            raise PackageError(
+                f"{where}: app.md declares `needs.bindings` but not `needs.views` — a "
+                "bindings companion requires the descriptor it maps"
+            )
+    if f"views/{VIEWS_FILE}" in present and not manifest.view_contract:
+        raise PackageError(
+            f"{where}: views/{VIEWS_FILE} is present but app.md never declares "
+            "`needs.views.contract` — an undeclared descriptor can never install"
+        )
+    if f"bindings/{BINDINGS_FILE}" in present and not manifest.binding_contract:
+        raise PackageError(
+            f"{where}: bindings/{BINDINGS_FILE} is present but app.md never declares "
+            "`needs.bindings.contract`"
+        )
+    storage_declared = [majors for name, majors in manifest.requires if name == "app-storage"]
+    if storage_declared and storage_declared != [(1,)]:
+        raise PackageError(
+            f"{where}: needs.requires.contracts must declare app-storage: [1]"
+        )
+    if STORAGE_DESCRIPTOR in present and not storage_declared:
+        raise PackageError(
+            f"{where}: {STORAGE_DESCRIPTOR} is present but app.md never declares "
+            "`needs.requires.contracts.app-storage: [1]` — an undeclared storage "
+            "plan can never install"
+        )
+    if storage_declared and STORAGE_DESCRIPTOR not in present:
+        raise PackageError(
+            f"{where}: app.md requires app-storage: [1] but the bundle carries no "
+            f"{STORAGE_DESCRIPTOR} — the contract and the descriptor install together "
+            "or not at all"
+        )
+    if any(f.startswith(f"{STORAGE_DIR}/") for f in files) and STORAGE_DESCRIPTOR not in present:
+        raise PackageError(
+            f"{where}: {STORAGE_DIR}/ members are present without {STORAGE_DESCRIPTOR}"
+        )
+
+
+def _check_descriptor_json(rel: str, text: str, where: str) -> None:
+    """A root descriptor must be a JSON object carrying its own contract
+    marker. Semantic validation stays with the host loader."""
+    try:
+        doc = json.loads(text)
+    except ValueError as e:
+        raise PackageError(f"{where}: {rel}: not valid JSON — {e}") from e
+    want = DESCRIPTOR_CONTRACTS[rel]
+    if not isinstance(doc, dict) or doc.get("contract") != want:
+        raise PackageError(
+            f'{where}: {rel}: root must be a JSON object with contract "{want}"'
+        )
+
+
+def check_file_bytes(
+    contents: list[tuple[str, bytes]], where: str, app: str | None = None
+) -> None:
+    """Aggregate size + all-files-UTF-8 over already shape-checked bytes.
+
+    An A1 bundle is UTF-8 text only — the host refuses any non-UTF-8
+    file. Per-file size was bounded while listing; this enforces the
+    aggregate bound and decodes every file so a non-UTF-8 byte never
+    reaches the manifest/guide stage. `contents` is the in-memory
+    (relpath, bytes) list; never call this on unbounded untrusted input.
+    `app` is the manifest identity, when known, so the storage descriptor
+    cannot claim a different app.
+    """
+    check_screen_bytes(contents, where)
+    total = 0
+    for rel, data in contents:
+        if len(data) > file_cap(rel):
+            raise PackageError(f"{where}: {rel} exceeds {file_cap(rel)} bytes")
+        total += len(data)
+        if total > MAX_APP_BYTES:
+            raise PackageError(
+                f"{where}: app is over {MAX_APP_BYTES} bytes of content — split it"
+            )
+        try:
+            text = data.decode("utf-8")
+        except UnicodeDecodeError as e:
+            raise PackageError(
+                f"{where}: {rel}: not UTF-8 text — an A1 app carries text only"
+            ) from e
+        if rel in DESCRIPTOR_CONTRACTS:
+            _check_descriptor_json(rel, text, where)
+    _check_app_storage(contents, where, app)
+
+
+def read_manifest(root: Path, files: list[str] | None = None) -> Manifest:
+    if files is None:
+        files = bundle_files(root)
+    try:
+        raw = (root / MANIFEST).read_bytes()
+    except OSError as e:
+        raise PackageError(f"cannot read {root / MANIFEST}: {e}") from e
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError as e:
+        raise PackageError(f"{MANIFEST}: not UTF-8 text — an A1 app carries text only") from e
+    manifest = parse_manifest(text)
+    check_pairing(manifest, files, MANIFEST)
+    return manifest
+
+
+# --- Archive writers ---------------------------------------------------
+
+
+def _tar_info(name: str, data: bytes, dir_: bool = False) -> tarfile.TarInfo:
+    info = tarfile.TarInfo(name)
+    info.mtime = EPOCH
+    info.uid = info.gid = 0
+    info.uname = info.gname = ""
+    if dir_:
+        info.type = tarfile.DIRTYPE
+        info.mode = 0o755
+        info.size = 0
+    else:
+        info.type = tarfile.REGTYPE
+        info.mode = 0o644
+        info.size = len(data)
+    return info
+
+
+def _member_names(prefix: str, files: list[str]) -> list[str]:
+    """Archive member names: sorted dirs first, then files."""
+    dirnames = sorted({str(parent) for rel in files for parent in PurePosixPath(rel).parents if str(parent) != "."})
+    members = [f"{prefix}{d}/" for d in dirnames]
+    members += [f"{prefix}{rel}" for rel in files]
+    return members
+
+
+def write_tar_gz(dest: Path, prefix: str, contents: list[tuple[str, bytes]]) -> None:
+    """Write a deterministic .tar.gz rooted at `prefix`.
+
+    `contents` is the sorted (relpath, bytes) file list. Directory
+    entries are explicit so extraction never depends on host tar
+    behaviour. Fixed mtime/uid/gid/uname/gname/mode make rebuilds
+    byte-identical.
+    """
+    files = [rel for rel, _ in contents]
+    data = dict(contents)
+    # gzip.GzipFile(mtime=0, filename="") pins the gzip header too —
+    # tarfile's own "w:gz" embeds the wall clock in the header MTIME
+    # field, which would make two builds seconds apart differ.
+    with dest.open("wb") as fh:
+        with gzip.GzipFile(filename="", fileobj=fh, mode="wb", mtime=EPOCH) as gz:
+            with tarfile.open(fileobj=gz, mode="w", format=tarfile.PAX_FORMAT) as tf:
+                for member in _member_names(prefix, files):
+                    if member.endswith("/"):
+                        tf.addfile(_tar_info(member, b"", dir_=True))
+                    else:
+                        tf.addfile(
+                            _tar_info(member, data[member[len(prefix):]]),
+                            io.BytesIO(data[member[len(prefix):]]),
+                        )
+
+
+def write_zip(dest: Path, prefix: str, contents: list[tuple[str, bytes]]) -> None:
+    """Write a deterministic .zip rooted at `prefix` (DEFLATED)."""
+    files = [rel for rel, _ in contents]
+    data = dict(contents)
+    with zipfile.ZipFile(dest, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as zf:
+        for member in _member_names(prefix, files):
+            info = zipfile.ZipInfo(member, date_time=(1980, 1, 1, 0, 0, 0))
+            info.create_system = 0
+            if member.endswith("/"):
+                info.external_attr = (0o40755 << 16) | 0x10
+                zf.writestr(info, b"")
+            else:
+                info.external_attr = 0o100644 << 16
+                zf.writestr(info, data[member[len(prefix):]])
+
+
+def read_contents(
+    root: Path, files: list[str], app: str | None = None
+) -> list[tuple[str, bytes]]:
+    contents = []
+    for rel in files:
+        path = root / rel
+        data = path.read_bytes()
+        if len(data) > file_cap(rel):
+            raise PackageError(f"{rel} is {len(data)} bytes — a file is at most {file_cap(rel)}")
+        contents.append((rel, data))
+    # A1 bundles are UTF-8 text; enforce the aggregate bound and decode
+    # every file — not just app.md — so a non-UTF-8 byte never ships.
+    check_file_bytes(contents, str(root), app)
+    return contents
+
+
+# --- Sidecar -----------------------------------------------------------
+
+
+def sha256_hex(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def write_sidecar(archive: Path) -> Path:
+    """Write `<archive>.sha256` — `sha256  filename` — integrity only."""
+    digest = sha256_hex(archive.read_bytes())
+    sidecar = archive.with_name(archive.name + SIDECAR_SUFFIX)
+    sidecar.write_text(f"{digest}  {archive.name}\n", encoding="ascii")
+    return sidecar
+
+
+def read_sidecar(archive: Path) -> str:
+    sidecar = archive.with_name(archive.name + SIDECAR_SUFFIX)
+    try:
+        line = sidecar.read_text(encoding="ascii").strip()
+    except OSError as e:
+        raise PackageError(f"cannot read {sidecar}: {e}") from e
+    except UnicodeDecodeError as e:
+        # A non-ASCII sidecar is malformed input, not a bug — refuse
+        # cleanly, never a UnicodeDecodeError traceback.
+        raise PackageError(
+            f"{sidecar.name}: not ASCII — expected `<64-hex>  {archive.name}`"
+        ) from e
+    parts = line.split()
+    if len(parts) != 2 or not re.fullmatch(r"[0-9a-f]{64}", parts[0]) or parts[1] != archive.name:
+        raise PackageError(
+            f"{sidecar.name}: expected `<64-hex>  {archive.name}` — refusing "
+            "a malformed or mismatched sidecar"
+        )
+    return parts[0]
+
+
+# --- Safe archive reading (never extractall) ---------------------------
+
+
+def _archive_members(archive: Path) -> tuple[list[tuple[str, bytes]], list[str]]:
+    """Read a release archive into memory with path/shape/bounds checks.
+
+    Returns (files, dirs): `files` is the regular-file member list as
+    (name, bytes); `dirs` is the explicit directory-entry names.
+    Every member — file or directory — must sit under the single bundle
+    root, be regular-file or directory only (links/devices/fifos refuse),
+    carry no absolute path or `..`, and not collide on a normalized name.
+    File count, per-file size and the aggregate size are enforced while
+    reading, before any unbounded aggregation. The archive's own
+    metadata is never trusted as authority.
+    """
+    members: list[tuple[str, bytes]] = []
+    dirs: list[str] = []
+    seen: set[str] = set()
+    total = 0
+
+    def admit(name: str, is_dir: bool, size: int, data: bytes | None) -> None:
+        nonlocal total
+        _check_member_path(name, archive.name)
+        norm = name.rstrip("/") if is_dir else name
+        if norm in seen:
+            raise PackageError(f"{archive.name}: duplicate member {norm}")
+        seen.add(norm)
+        if is_dir:
+            dirs.append(norm)
+            return
+        rel = name.partition("/")[2]
+        if size > file_cap(rel):
+            raise PackageError(
+                f"{archive.name}: {name} is {size} bytes — a file is at most {file_cap(rel)}"
+            )
+        total += size
+        if total > MAX_APP_BYTES:
+            raise PackageError(
+                f"{archive.name}: app is over {MAX_APP_BYTES} bytes of content — split it"
+            )
+        if len(members) + 1 > MAX_FILES:
+            raise PackageError(f"{archive.name}: more than {MAX_FILES} files")
+        members.append((name, data if data is not None else b""))
+
+    if archive.name.endswith(".zip"):
+        try:
+            zf = zipfile.ZipFile(archive)
+        except zipfile.BadZipFile as e:
+            raise PackageError(f"{archive.name}: not a zip archive — {e}") from e
+        except OSError as e:
+            raise PackageError(f"{archive.name}: cannot read archive — {e}") from e
+        with zf:
+            for info in zf.infolist():
+                # A unix symlink or non-regular file carries its type in
+                # the high bits of external_attr (the mode field). When
+                # unix type bits are present they are authoritative — a
+                # member whose mode is not a regular file or directory
+                # refuses, regardless of the create_system platform flag
+                # or a trailing-slash name. With no unix type bits the
+                # member is regular unless it is a directory entry.
+                mode = (info.external_attr >> 16) & 0xFFFF
+                ftype = stat.S_IFMT(mode)
+                # With unix type bits present, they decide: only regular
+                # files and directories pass. With none (mode==0 or
+                # permission bits alone), the member is a regular file
+                # unless it is a directory entry.
+                if ftype == stat.S_IFDIR or info.is_dir():
+                    admit(info.filename, True, 0, None)
+                    continue
+                if ftype not in (0, stat.S_IFREG):
+                    raise PackageError(
+                        f"{archive.name}: member {info.filename} is not a regular "
+                        "file (links/devices/special types refuse)"
+                    )
+                try:
+                    data = zf.read(info)
+                except (zipfile.BadZipFile, OSError) as e:
+                    # A corrupt member/local header is malformed input —
+                    # refuse cleanly, never a BadZipFile traceback.
+                    raise PackageError(
+                        f"{archive.name}: cannot read member {info.filename} — {e}"
+                    ) from e
+                admit(info.filename, False, info.file_size, data)
+        return members, dirs
+
+    try:
+        try:
+            tf = tarfile.open(archive, mode="r:*")
+        except (tarfile.TarError, OSError) as e:
+            raise PackageError(f"{archive.name}: cannot read archive — {e}") from e
+        with tf:
+            for info in tf:
+                if info.isdir():
+                    admit(info.name, True, 0, None)
+                    continue
+                if not info.isreg():
+                    raise PackageError(
+                        f"{archive.name}: member {info.name} is not a regular file "
+                        "(links/devices refuse)"
+                    )
+                try:
+                    fh = tf.extractfile(info)
+                except (tarfile.TarError, OSError) as e:
+                    raise PackageError(
+                        f"{archive.name}: cannot read member {info.name} — {e}"
+                    ) from e
+                if fh is None:
+                    raise PackageError(f"{archive.name}: cannot read member {info.name}")
+                try:
+                    data = fh.read()
+                except (tarfile.TarError, OSError) as e:
+                    raise PackageError(
+                        f"{archive.name}: cannot read member {info.name} — {e}"
+                    ) from e
+                admit(info.name, False, info.size, data)
+    except (tarfile.TarError, OSError, EOFError) as e:
+        raise PackageError(f"{archive.name}: cannot read archive — {e}") from e
+    return members, dirs
+
+
+def _check_member_path(name: str, archive_name: str) -> PurePosixPath:
+    """Refuse a member name that is not already canonical.
+
+    Run on the RAW member name before any PurePosixPath use. `PurePosixPath`
+    collapses `.`/`..`/`//` and drops a trailing slash in `.parts`, so a
+    string like `hr-0.1.0/./workflows/x.md` yields parts
+    `(hr-0.1.0, workflows, x.md)` — the alias would pass a parts-based
+    check while the raw string still names a different on-disk path and
+    can overwrite a canonical file on extract. Reject every non-canonical
+    component by splitting the raw string, so `seen` keys, the prefix
+    strip and the rel tree all agree on the same canonical name. A
+    directory's single trailing `/` is allowed; no other empty or `.`/`..`
+    component is.
+    """
+    if not name or "\\" in name:
+        raise PackageError(f"{archive_name}: bad member name {name!r}")
+    if name.startswith("/"):
+        raise PackageError(f"{archive_name}: absolute member path {name!r} refuses")
+    parts = name.split("/")
+    # A single trailing slash marks a directory entry — drop it before
+    # checking components. Any other empty or `.`/`..` part is an alias.
+    if parts and parts[-1] == "":
+        parts = parts[:-1]
+    if not parts or any(p in ("", ".", "..") for p in parts):
+        raise PackageError(
+            f"{archive_name}: member path {name!r} is not canonical — "
+            "a `.`/`..`/empty component is an alias and refuses"
+        )
+    path = PurePosixPath(name)
+    if path.is_absolute():
+        raise PackageError(f"{archive_name}: absolute member path {name!r} refuses")
+    return path
+
+
+def verify_archive(archive: Path) -> dict:
+    """Verify a built archive: sidecar digest + member shape + manifest.
+
+    Returns a result dict for the report. Fails on the first problem
+    with a genuine nonzero exit.
+    """
+    expected = read_sidecar(archive)
+    actual = sha256_hex(archive.read_bytes())
+    if actual != expected:
+        raise PackageError(
+            f"{archive.name}: SHA256 mismatch — archive {actual[:12]}… vs "
+            f"sidecar {expected[:12]}… (integrity check failed)"
+        )
+
+    members, dirs = _archive_members(archive)
+    if not members:
+        raise PackageError(f"{archive.name}: archive carries no files")
+    # The archive is rooted at a single prefix dir holding the bundle
+    # files directly (prefix + relpath). Find that prefix from app.md.
+    manifest_members = [n for n, _ in members if PurePosixPath(n).name == MANIFEST]
+    if len(manifest_members) != 1:
+        raise PackageError(
+            f"{archive.name}: expected exactly one {MANIFEST} at the bundle "
+            f"root, found {len(manifest_members)}"
+        )
+    manifest_member = manifest_members[0]
+    prefix = manifest_member[: -len(MANIFEST)]
+    if not prefix or not prefix.endswith("/") or prefix.count("/") != 1:
+        raise PackageError(
+            f"{archive.name}: {MANIFEST} must sit at the archive root's "
+            "single top directory"
+        )
+    rels = []
+    rel_bytes: list[tuple[str, bytes]] = []
+    for name, data in members:
+        if not name.startswith(prefix):
+            raise PackageError(
+                f"{archive.name}: member {name} is outside the bundle root {prefix}"
+            )
+        rel = name[len(prefix):]
+        rels.append(rel)
+        rel_bytes.append((rel, data))
+    rels.sort()
+    # Directory entries are checked too — a dir outside the root, a
+    # dot-dir or an unknown top-level dir refuses like a file would.
+    for d in dirs:
+        drel = d[len(prefix):] if d.startswith(prefix) else d
+        _check_member_dir(drel, archive.name, prefix, d)
+
+    # Re-run the bundle shape checks on the member names: this is the
+    # same allowlist bundle_files enforces on a real tree.
+    _check_member_tree(rels, archive.name)
+
+    # Aggregate bound + every file is UTF-8 text (same as the source
+    # path's check_file_bytes) — not just the manifest.
+    manifest_bytes = dict(members)[manifest_member]
+    try:
+        manifest_text = manifest_bytes.decode("utf-8")
+    except UnicodeDecodeError as e:
+        raise PackageError(f"{archive.name}: {MANIFEST}: not UTF-8 text — an A1 app carries text only") from e
+    try:
+        manifest = parse_manifest(manifest_text)
+    except PackageError as e:
+        raise PackageError(f"{archive.name}: {e}") from e
+    _check_version_semver(manifest.version)
+    # Aggregate bound, UTF-8 text and the app-storage plan/hashes; the
+    # manifest identity is known here so a descriptor cannot claim
+    # another app.
+    check_file_bytes(rel_bytes, archive.name, manifest.app)
+    # Descriptor/companion files pair with their manifest declarations —
+    # the same both-ways check the source path runs.
+    check_pairing(manifest, rels, archive.name)
+
+    # The archive name pins `<app>-<version>` — name/bytes cannot drift.
+    base = archive.name
+    for suffix in (".tar.gz", ".zip"):
+        if base.endswith(suffix):
+            base = base[: -len(suffix)]
+    if base != f"{manifest.app}-{manifest.version}":
+        raise PackageError(
+            f"{archive.name}: archive name is '{base}' but the manifest "
+            f"declares app={manifest.app} version={manifest.version}"
+        )
+    return {
+        "archive": archive.name,
+        "sha256": actual,
+        "files": len(rels),
+        "app": manifest.app,
+        "version": manifest.version,
+        "integrity": "archive sha256 matches sidecar (integrity only — "
+        "not a Cadence bundle digest, signature or approval)",
+    }
+
+
+def _check_member_tree(rels: list[str], archive_name: str) -> None:
+    """Shape-check archive member rel-paths like bundle_files does."""
+    files = []
+    dirs = set()
+    manifest = False
+    for rel in rels:
+        if rel == MANIFEST:
+            manifest = True
+            files.append(rel)
+            continue
+        if rel in ROOT_DESCRIPTORS:
+            files.append(rel)
+            continue
+        parts = PurePosixPath(rel).parts
+        if len(parts) == 3 and parts[:2] == ("screens", "hr") and screen_leaf(parts[2]):
+            files.append(rel)
+            dirs.add("screens")
+            continue
+        if len(parts) != 2 or rel.endswith("/"):
+            # A rel that is not exactly `top/name`, or a file member whose
+            # name ends in `/` (masquerading as a directory entry), has no
+            # place in a flat v0 bundle.
+            raise PackageError(
+                f"{archive_name}: member {rel} — v0 app dirs are flat, "
+                "no nested folders"
+            )
+        top, name = parts
+        if top == "screens":
+            raise PackageError(f"{archive_name}: screen files belong only under screens/hr/")
+        if top not in TOP_DIRS:
+            raise PackageError(
+                f"{archive_name}: member {rel} — this package tool admits app.md, the known "
+                "root descriptors, workflows/, rubrics/, templates/, "
+                "views/, bindings/, screens/ and storage/; everything else refuses"
+            )
+        if name.startswith("."):
+            raise PackageError(f"{archive_name}: member {rel} is a dotfile")
+        dirs.add(top)
+        if top == "workflows":
+            if not name.endswith(".md"):
+                raise PackageError(
+                    f"{archive_name}: member {rel} — workflows end in .md"
+                )
+            _check_tag(name[: -len(".md")], "workflow name")
+        if top == "views" and name != VIEWS_FILE:
+            raise PackageError(f"{archive_name}: views/ holds exactly {VIEWS_FILE}")
+        if top == "bindings" and name != BINDINGS_FILE:
+            raise PackageError(f"{archive_name}: bindings/ holds exactly {BINDINGS_FILE}")
+        if top == "storage" and (
+            not name.endswith(".json") or not STORAGE_PATH_RE.fullmatch(rel)
+        ):
+            raise PackageError(
+                f"{archive_name}: member {rel} — storage holds flat "
+                "`storage/<tag>.json` migration files only"
+            )
+        files.append(rel)
+    if not manifest:
+        raise PackageError(f"{archive_name}: bundle root has no {MANIFEST}")
+    if "workflows" not in dirs:
+        raise PackageError(f"{archive_name}: bundle has no workflows/")
+    if len(files) > MAX_FILES:
+        raise PackageError(f"{archive_name}: {len(files)} files — at most {MAX_FILES}")
+
+
+def _check_member_dir(drel: str, archive_name: str, prefix: str, full: str) -> None:
+    """Validate one explicit archive directory entry.
+
+    `drel` is the path relative to the bundle prefix; `full` is the
+    member name. A dir must sit directly under the bundle root as one
+    of the allowed top dirs — anything deeper, outside, a dot-dir or an
+    unknown name refuses, and it cannot collide with a file of the same
+    normalized name (already covered by the `seen` set).
+    """
+    if not full.startswith(prefix):
+        raise PackageError(
+            f"{archive_name}: directory member {full} is outside the bundle root {prefix}"
+        )
+    if drel.rstrip("/") == "screens/hr":
+        return
+    if not drel or "/" in drel.rstrip("/"):
+        raise PackageError(
+            f"{archive_name}: directory member {full} — v0 app dirs are flat, "
+            "no nested folders"
+        )
+    top = drel.rstrip("/")
+    if top.startswith("."):
+        raise PackageError(f"{archive_name}: dot-directory {full} refuses")
+    if top not in TOP_DIRS:
+        raise PackageError(
+            f"{archive_name}: directory member {full} — this package tool admits "
+            "workflows/, rubrics/, templates/, views/, bindings/, screens/ and "
+            "storage/ under the bundle root"
+        )
+
+
+# --- Commands ------------------------------------------------------------
+
+
+def default_source() -> Path:
+    return Path(__file__).resolve().parent.parent / "app"
+
+
+def cmd_build(args: argparse.Namespace) -> int:
+    source: Path = args.source
+    files = bundle_files(source)
+    manifest = read_manifest(source)
+    _check_version_semver(manifest.version)
+    contents = read_contents(source, files, manifest.app)
+
+    archive_name = f"{manifest.app}-{manifest.version}.{args.format}"
+    prefix = f"{manifest.app}-{manifest.version}/"
+    try:
+        args.outdir.mkdir(parents=True, exist_ok=True)
+        archive = args.outdir / archive_name
+        if args.format == "tar.gz":
+            write_tar_gz(archive, prefix, contents)
+        else:
+            write_zip(archive, prefix, contents)
+        sidecar = write_sidecar(archive)
+    except OSError as e:
+        raise PackageError(f"cannot write package in {args.outdir}: {e}") from e
+
+    result = {
+        "archive": str(archive),
+        "sidecar": str(sidecar),
+        "sha256": sha256_hex(archive.read_bytes()),
+        "files": len(files),
+        "app": manifest.app,
+        "version": manifest.version,
+        "note": "archive sha256 is integrity evidence only — not the "
+        "Cadence bundle digest, a signature or an approval",
+    }
+    print(json.dumps(result, indent=2))
+    return 0
+
+
+def cmd_verify(args: argparse.Namespace) -> int:
+    result = verify_archive(args.archive)
+    print(json.dumps(result, indent=2))
+    return 0
+
+
+def cmd_check(args: argparse.Namespace) -> int:
+    """Offline shape check of the bundle source — not host validation."""
+    files = bundle_files(args.source)
+    manifest = read_manifest(args.source)
+    read_contents(args.source, files, manifest.app)
+    print(
+        json.dumps(
+            {
+                "source": str(args.source),
+                "app": manifest.app,
+                "version": manifest.version,
+                "files": files,
+                "note": "offline shape check only — the host loader's full "
+                "validation (workflow check, secret guard, slot "
+                "cross-checks) did not run",
+            },
+            indent=2,
+        )
+    )
+    return 0
+
+
+def cmd_extract_for_test(archive: Path, dest: Path) -> None:
+    """Extract via member-by-member copy with path checks (tests only).
+
+    Deliberately NOT tarfile.extractall: member names were already
+    path-checked by _archive_members; this writes only regular files
+    under dest/<prefix>/.
+    """
+    members, _dirs = _archive_members(archive)
+    for name, data in members:
+        target = dest / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(data)
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        prog="package_app.py",
+        description="Deterministic packaging/verification for the app/ bundle "
+        "(Python stdlib only; does not select an app runtime).",
+    )
+    sub = parser.add_subparsers(dest="cmd", required=True)
+
+    p_build = sub.add_parser("build", help="build the versioned archive + .sha256 sidecar")
+    p_build.add_argument("--source", type=Path, default=None,
+                         help="bundle root (default: ../app beside this script)")
+    p_build.add_argument("--outdir", type=Path, default=None,
+                         help="output dir (default: ../dist beside this script)")
+    p_build.add_argument("--format", choices=ALLOWED_FORMATS, default="tar.gz")
+    p_build.set_defaults(fn=cmd_build)
+
+    p_verify = sub.add_parser("verify", help="verify an archive against its sidecar and the bundle shape")
+    p_verify.add_argument("archive", type=Path)
+    p_verify.set_defaults(fn=cmd_verify)
+
+    p_check = sub.add_parser("check", help="offline bundle shape check (not host validation)")
+    p_check.add_argument("--source", type=Path, default=None)
+    p_check.set_defaults(fn=cmd_check)
+
+    args = parser.parse_args(argv)
+    if getattr(args, "source", None) is None and args.cmd in ("build", "check"):
+        args.source = default_source()
+    if getattr(args, "outdir", None) is None and args.cmd == "build":
+        args.outdir = Path(__file__).resolve().parent.parent / "dist"
+    try:
+        return args.fn(args)
+    except PackageError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
