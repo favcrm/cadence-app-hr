@@ -1,109 +1,80 @@
 import { ApiError } from "@cadence/screen-ui";
-import {
-  createScreenReceiver,
-  ScreenClosedError,
-  ScreenRefusalError,
-  ScreenTimeoutError,
-  type ScreenBoot,
-  type ScreenReceiver,
-} from "@cadence/app-kit";
-import { acceptPush, clearScope } from "./scope";
-import { OPERATIONS, WRITE_BUDGET } from "./services";
+import { createScreenBridge, type ScreenBridge, type ScreenBridgeRuntimeOverrides } from "@cadence/app-kit";
+import { bindBridgeScope, type DisplayScope } from "./scope";
+import { CALL_FIELDS, OPERATIONS, SECTIONS, WRITE_BUDGET, WRITE_VERBS, type Section } from "./services";
 
-const MAX_PUSH_BYTES = 131072;
-const MAX_DATA_BYTES = 1048576;
-const SECRET_KEYS = ["confirmation_nonce", "confirmation_token", "confirm_token", "action_token"];
-const object = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
-export function exact(v: Record<string, unknown>, keys: readonly string[]): boolean { return Object.keys(v).every(k => keys.includes(k)); }
-const bytes = (v: unknown) => new TextEncoder().encode(JSON.stringify(v)).length;
-const invalid = () => new ApiError("The HR bridge refused an invalid or retired response", 502);
+export type HrView = "list" | "new";
+export type HrBridge = ScreenBridge<Section, HrView, ApiError>;
 
-function guardData(value: unknown): unknown {
-  if (bytes(value) > MAX_DATA_BYTES) throw invalid();
-  if (object(value) && SECRET_KEYS.some(k => k in value)) throw invalid();
-  return value;
+const unavailable = () => new ApiError("The HR bridge is unavailable", 503);
+
+/**
+ * The pinned app-kit bridge, configured for HR. It negotiates `screen.v2`, `screen-records.v1` and
+ * `screen-locale.v1`; validates every PUSH; and holds each operation to its field allowlist and argument budget.
+ * Record writes get `WRITE_BUDGET` (49,152 bytes); every other operation keeps app-kit's 16,384 default. The
+ * receiver underneath is created with the largest of them, so it never sends what the board would close on.
+ */
+export function createHrBridge(): HrBridge {
+  return createScreenBridge<Section, HrView, ApiError>({
+    tag: "hr",
+    appName: "hr",
+    records: true,
+    locale: true,
+    calls: CALL_FIELDS,
+    argBytes: Object.fromEntries(WRITE_VERBS.map((verb) => [verb, WRITE_BUDGET])),
+    writeVerbs: WRITE_VERBS,
+    route: { sections: SECTIONS, defaultSection: "people", views: ["list", "new"] },
+    observations: ["records.list", "records.show"],
+    maxInFlight: 8,
+    timeoutMs: 65000,
+    createError: (message, status, options) => new ApiError(message, status, options),
+  });
 }
 
-/** The one adapter over the pinned app-kit receiver; the app opens no other channel. */
-class Channel {
-  private receiver: ScreenReceiver | null = null;
-  private retired = false;
-  private inFlight = 0;
-  private cause: ApiError | null = null;
+/** The one adapter over the pinned app-kit bridge; the app opens no other channel. */
+export class Channel {
+  private instance: HrBridge | null = null;
 
-  start(): void {
-    if (this.receiver || this.retired) return;
-    const node = document.getElementById("cadence-screen-boot");
-    if (!node?.textContent || node.textContent.length > 2048) throw invalid();
-    const boot: unknown = JSON.parse(node.textContent);
-    if (!object(boot) || !exact(boot, ["tag", "bridge_nonce", "generation", "parent_origin"]) || boot.tag !== "hr" ||
-        typeof boot.bridge_nonce !== "string" || !/^[a-f0-9]{64}$/.test(boot.bridge_nonce) ||
-        !Number.isSafeInteger(boot.generation) || (boot.generation as number) < 0 || typeof boot.parent_origin !== "string") throw invalid();
-    const origin = new URL(boot.parent_origin);
-    if (origin.origin !== boot.parent_origin || !["http:", "https:"].includes(origin.protocol) || window.parent === window) throw invalid();
+  /** Created on first use, so importing this module never reads the boot or touches the services table. */
+  get bridge(): HrBridge {
+    this.instance ??= createHrBridge();
+    return this.instance;
+  }
 
-    const receiver = createScreenReceiver({
-      boot: boot as unknown as ScreenBoot,
-      accepts: ["screen.v2", "screen-records.v1", "crm-locale.v1"],
-      timeoutMs: 65000,
-      // The largest per-operation budget (a record write); `cleanArgs` holds every other operation to 16 KiB.
-      // Without it the receiver keeps its 16 KiB default and refuses a long policy or CV.
-      maxArgsBytes: WRITE_BUDGET,
-      onPush: (push) => {
-        if (bytes(push) > MAX_PUSH_BYTES) throw invalid();
-        acceptPush(push);
-      },
-      onError: (reason) => {
-        this.retire(new ApiError(reason, 502));
-      },
+  start(runtime: ScreenBridgeRuntimeOverrides = {}): void {
+    bindBridgeScope(this.bridge);
+    this.bridge.start(runtime);
+    // A refused boot (another app's tag, a bad nonce or origin) leaves the bridge retired: never mount.
+    const state = this.bridge.getState();
+    if (state.status === "error") throw state.error ?? unavailable();
+  }
+
+  /**
+   * Sends one operation for a scope. The board closes the frame on the first 401 or 403, so a 403 retires the
+   * session here too, on a write as on a read (app-kit keeps a write's 403 alive on its own).
+   */
+  call<T = unknown>(scope: DisplayScope, verb: string, args: Record<string, unknown>): Promise<T> {
+    if (this.bridge.getState().status !== "ready" || !this.bridge.getSnapshot()) return Promise.reject(unavailable());
+    return this.bridge.call<T>(scope, verb, args).catch((error: unknown) => {
+      if (error instanceof ApiError && error.status === 403) this.bridge.retire(error);
+      throw error;
     });
-    // app-kit reports a refused boot through an inert receiver; keep the app's
-    // own tag check so a different app's boot can never mount HR.
-    if (!receiver.boot || receiver.boot.tag !== "hr") {
-      receiver.teardown();
-      throw invalid();
-    }
-    this.receiver = receiver;
   }
 
+  /** `call` for the current scope, without the screen's own checks: the contract tests drive the wire with it. */
   request(verb: string, args: Record<string, unknown>): Promise<unknown> {
-    const receiver = this.receiver;
-    if (!receiver || this.retired) return Promise.reject(new ApiError("The HR bridge is unavailable", 503));
-    if (this.inFlight >= 8) return Promise.reject(new ApiError("The HR bridge is busy; wait for the current request", 429));
-    this.inFlight += 1;
-    const settle = () => { this.inFlight -= 1; };
-    return receiver.call(verb, args).then(
-      value => {
-        settle();
-        try { return guardData(value); }
-        catch (error) { const mapped = this.mapError(error); this.retire(mapped); throw mapped; }
-      },
-      error => {
-        settle();
-        const mapped = this.mapError(error);
-        if ([401, 403, 504, 502].includes(mapped.status)) this.retire(mapped);
-        return Promise.reject(mapped);
-      },
-    );
-  }
-
-  private mapError(error: unknown): ApiError {
-    if (error instanceof ApiError) return error;
-    if (error instanceof ScreenRefusalError) return new ApiError(error.text || error.code, error.status, { code: error.code });
-    if (error instanceof ScreenTimeoutError) {
-      return new ApiError("The request did not answer. Check the record before retrying a change.", 504);
-    }
-    if (error instanceof ScreenClosedError) return this.cause ?? new ApiError("The HR bridge is unavailable", 503);
-    return invalid();
+    const snap = this.bridge.getSnapshot();
+    if (!snap) return Promise.reject(unavailable());
+    return this.call(snap.scope, verb, args);
   }
 
   retire(error: ApiError): void {
-    if (this.retired) return;
-    this.retired = true; this.cause = error;
-    this.receiver?.teardown(); this.receiver = null;
-    clearScope(error.message);
+    this.bridge.retire(error);
   }
 }
+
 export const createChannel = (): Channel => new Channel();
 export const channel = createChannel();
-export function admitted(verb: string, actions: readonly string[]): boolean { return OPERATIONS.includes(verb) && actions.includes(verb); }
+export function admitted(verb: string, actions: readonly string[]): boolean {
+  return OPERATIONS.includes(verb) && actions.includes(verb);
+}

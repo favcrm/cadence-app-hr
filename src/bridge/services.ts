@@ -22,12 +22,13 @@ export const CALL_FIELDS: Record<keyof CallArgs, readonly string[]> = {
 export const OPERATIONS: string[] = Object.keys(CALL_FIELDS);
 // The board shell's records-frame argument limits. It closes the frame on a larger message, so the screen refuses
 // first. A write carries a policy body or a CV of 12,000 characters (about 36 KB in written Chinese).
-/** Largest `records.create` / `records.update` arguments, in bytes of JSON; the receiver is created with this limit. */
+/** Largest `records.create` / `records.update` arguments, in bytes of JSON; the bridge holds each write to it. */
 export const WRITE_BUDGET = 49152;
-/** Largest arguments of every other operation, in bytes of JSON. */
+/** Largest arguments of every other operation, in bytes of JSON: app-kit's default, which the bridge keeps. */
 export const REQUEST_BUDGET = 16384;
-const WRITES: readonly string[] = ["records.create", "records.update"];
-export const isWrite = (verb: string): boolean => WRITES.includes(verb);
+/** The record writes: they get the write budget, and a successful one invalidates cached reads. */
+export const WRITE_VERBS: readonly string[] = ["records.create", "records.update"];
+export const isWrite = (verb: string): boolean => WRITE_VERBS.includes(verb);
 export const requestBudget = (verb: string): number => (isWrite(verb) ? WRITE_BUDGET : REQUEST_BUDGET);
 /** The code of a request the screen refused for its size (the screen words it as "too long"); nothing was sent. */
 const TOO_LARGE = "too_large";
@@ -41,12 +42,9 @@ export function cleanArgs(verb: string, args: Bag): Bag {
   }
   return value;
 }
-const writeListeners = new Set<() => void>();
-export const onWrite = (f: () => void) => { writeListeners.add(f); return () => { writeListeners.delete(f); }; };
-const written = () => writeListeners.forEach(f => f());
+/** Called after every successful record write (the bridge's `writeVerbs`). */
+export const onWrite = (f: () => void): (() => void) => channel.bridge.onWrite(f);
 export async function serviceCall<T = unknown, K extends keyof CallArgs = keyof CallArgs>(scope: DisplayScope, verb: K, args: CallArgs[K]): Promise<T> {
   assertCurrentScope(scope); requireOperation(verb);
-  const result = await channel.request(verb, cleanArgs(verb, args as Bag)) as T;
-  if (isWrite(verb)) written();
-  return result;
+  return channel.call<T>(scope, verb, cleanArgs(verb, args as Bag));
 }

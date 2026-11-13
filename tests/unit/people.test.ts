@@ -97,6 +97,9 @@ test("write refusals are classified by what the frame can tell", () => {
   expect(classifyWriteFailure({ status: 403, code: "forbidden" }, "update")).toBe("neutral");
   expect(classifyWriteFailure({ status: 500 }, "update")).toBe("neutral");
   expect(classifyWriteFailure(null, "create")).toBe("neutral");
+  // The bridge's own busy refusal (eight requests in flight) carries code `conflict`, but nothing was sent.
+  expect(classifyWriteFailure({ status: 429, code: "conflict" }, "update")).toBe("neutral");
+  expect(classifyWriteFailure({ status: 429, code: "conflict" }, "create")).toBe("neutral");
 });
 
 test("every English string the screen translates has a zh-HK entry", () => {

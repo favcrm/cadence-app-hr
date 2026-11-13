@@ -143,6 +143,11 @@ function handle(request: Record<string, unknown>) {
     status.textContent = `${scenario} · synthetic data held in this tab`;
     return;
   }
+  // The leave hint: the real board asks before navigating away while it is true.
+  if (request.v === 2 && request.op === "leave" && typeof request.unsaved === "boolean") {
+    status.textContent = `${scenario} · synthetic data held in this tab${request.unsaved ? " · unsaved edits" : ""}`;
+    return;
+  }
   if (request.v !== 2 || request.op !== "call" || typeof request.id !== "string") return;
   const id = request.id, verb = String(request.verb), args = (request.args ?? {}) as Record<string, unknown>;
   const answer = (data: unknown) => port?.postMessage({ v: 2, op: "reply", id, ok: true, data });

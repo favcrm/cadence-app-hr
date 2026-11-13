@@ -415,3 +415,24 @@ test("a write over 49,152 bytes is refused in the screen with a plain 'too long'
   expect(R.classify({ status: 413 }, "create")).toBe("neutral");
   expect(R.classify({ status: 400, code: "failed" }, "create")).toBe("rejected");
 });
+
+test("only the screen's own 413 is 'too long'; the board's relayed too_large means the write may have landed", () => {
+  // The screen's refusal: status 413, code `too_large`, nothing sent.
+  expect(R.classify({ status: 413, code: "too_large" }, "create")).toBe("too_long");
+  expect(R.classify({ status: 413, code: "too_large" }, "update")).toBe("too_long");
+  // The board sends `too_large` when a reply is too big to show, after the write ran. app-kit gives an unnamed
+  // refusal code status 400. Saying "too long" or "not saved" would be false; the record may be saved.
+  for (const operation of ["create", "update"] as const) {
+    expect(R.classify({ status: 400, code: "too_large" }, operation)).toBe("maybe_saved");
+    expect(S.problemFor(new ApiError("That is too large to show.", 400, { code: "too_large" }), operation, (s) => s))
+      .toEqual({ field: null, message: S.TEXT.maybe_saved, kind: "maybe_saved", reload: false });
+  }
+});
+
+test("the bridge's busy refusal (429, code conflict) is neither a revision conflict nor a duplicate: nothing was sent", () => {
+  expect(R.classify({ status: 429, code: "conflict" }, "update")).toBe("neutral");
+  expect(R.classify({ status: 429, code: "conflict" }, "create")).toBe("neutral");
+  // A real conflict still reads as one.
+  expect(R.classify({ status: 409, code: "conflict" }, "update")).toBe("changed");
+  expect(R.classify({ status: 409, code: "conflict" }, "create")).toBe("maybe_saved");
+});

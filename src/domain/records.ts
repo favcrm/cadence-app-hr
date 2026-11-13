@@ -255,12 +255,18 @@ export async function assertLeaveCodeFree(list: ListFn, code: string, ownId: str
 // ---- failure wording ----------------------------------------------------------------------------
 /**
  * What a refused write can honestly be called. The frame sees only 401, 403, 404, 409, 503 as named codes and shows every
- * other status as 400/failed. `too_long` is the screen's own refusal (code `too_large`): the write was never sent.
+ * other status as 400/failed.
+ * - too_long: the screen's own refusal (status 413, code `too_large`): the write was never sent.
+ * - neutral for a 429: the screen's own busy refusal (eight requests in flight): nothing was sent.
+ * - maybe_saved for any other `too_large`: the board relays that code (status 400) when a reply is too big to show,
+ *   after the write ran.
  */
 export type Failure = "too_long" | "stale" | "changed" | "maybe_saved" | "store_unavailable" | "timeout" | "session" | "forbidden" | "rejected" | "neutral";
 export function classify(error: { status?: number; code?: string } | null | undefined, operation: "create" | "update"): Failure {
   const code = error?.code, status = error?.status;
-  if (code === "too_large") return "too_long";
+  if (status === 413 && code === "too_large") return "too_long";
+  if (status === 429) return "neutral";
+  if (code === "too_large") return "maybe_saved";
   if (code === "stale_revision" || code === "revision_conflict") return operation === "update" ? "stale" : "maybe_saved";
   if (status === 409 || code === "conflict") return operation === "update" ? "changed" : "maybe_saved";
   if (status === 401) return "session";
