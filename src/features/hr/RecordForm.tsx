@@ -1,5 +1,6 @@
 import { ErrorNotice, Field, Select } from "@cadence/screen-ui";
 import { useState } from "react";
+import { useUnsavedEdits } from "../../bridge/leave";
 import { FormError, optionLabel, type Field as Spec, type TableSpec, type Values } from "../../domain/records";
 import { useLocale } from "./locale";
 
@@ -17,6 +18,7 @@ export default function RecordForm({ spec, formId, initial, problem, onSubmit, c
   const { t } = useLocale();
   const [values, setValues] = useState<Values>(initial);
   const [local, setLocal] = useState<RecordProblem | null>(null);
+  useUnsavedEdits(Object.keys(values).some((key) => values[key] !== initial[key]));
   const set = (key: string, value: string) => { setValues((prev) => ({ ...prev, [key]: value })); setLocal(null); };
   const shown = local ?? problem;
   const err = (key: string) => (shown?.field === key ? shown.message : undefined);

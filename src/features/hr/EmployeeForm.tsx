@@ -1,5 +1,6 @@
 import { ErrorNotice, Field, Select } from "@cadence/screen-ui";
 import { useState } from "react";
+import { useUnsavedEdits } from "../../bridge/leave";
 import { EMPLOYEE_STATUSES, EMPLOYMENT_TYPES, FormError, LIMITS, type EmployeeForm as Fields } from "../../domain/people";
 import { useLocale } from "./locale";
 
@@ -14,16 +15,19 @@ const offered = (list: readonly string[], current: string) => (list.includes(cur
 /** A refusal shown under the field it belongs to; anything else shows once above the buttons. */
 export interface FieldProblem { field: keyof Fields | null; message: string }
 
-export default function EmployeeForm({ initial, formId, problem, onSubmit, children }: {
+export default function EmployeeForm({ initial, formId, problem, onSubmit, saved = false, children }: {
   initial: Fields; formId: string; problem: FieldProblem | null;
   /** May throw a FormError; the form shows it under its field. */
   onSubmit: (fields: Fields) => void;
+  /** The values are stored: the form no longer holds unsaved edits, even if it is still shown. */
+  saved?: boolean;
   /** Extra controls under the notice, e.g. the reload button for a stale save. */
   children?: React.ReactNode;
 }) {
   const { t } = useLocale();
   const [fields, setFields] = useState<Fields>(initial);
   const [local, setLocal] = useState<FieldProblem | null>(null);
+  useUnsavedEdits(!saved && (Object.keys(fields) as (keyof Fields)[]).some((key) => fields[key] !== initial[key]));
   const set = (patch: Partial<Fields>) => { setFields((prev) => ({ ...prev, ...patch })); setLocal(null); };
   const shown = local ?? problem;
   const err = (field: keyof Fields) => (shown?.field === field ? shown.message : undefined);

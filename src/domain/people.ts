@@ -113,13 +113,15 @@ export function findDuplicate(rows: readonly { id: string; profile: unknown }[],
  * - maybe_saved: a 409 on create after a clean pre-check, most often a retry of a create that already landed;
  * - rejected: status 400 with code `failed`. The board sends every status it does not name (400, 413, 500...) this
  *   way, so the frame cannot tell a field refusal from a server failure and the text must be true for both;
- * - neutral: anything else.
+ * - neutral: anything else, including the screen's own busy refusal (429, eight requests in flight), which sent nothing.
  * A duplicate is claimed only when the pre-check found the row.
  */
 export type WriteFailure = "stale" | "changed" | "maybe_saved" | "store_unavailable" | "timeout" | "session" | "rejected" | "neutral";
 /** The hosted board narrows a host error by HTTP status to unauthorized, forbidden, not_found, conflict, unavailable or failed. */
 export function classifyWriteFailure(error: { status?: number; code?: string } | null | undefined, operation: "create" | "update"): WriteFailure {
   const code = error?.code, status = error?.status;
+  // The bridge's busy refusal carries code `conflict`; it is not a revision conflict.
+  if (status === 429) return "neutral";
   if (code === "stale_revision" || code === "revision_conflict") return operation === "update" ? "stale" : "maybe_saved";
   if (status === 409 || code === "conflict") return operation === "update" ? "changed" : "maybe_saved";
   if (status === 401) return "session";

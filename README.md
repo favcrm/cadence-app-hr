@@ -17,9 +17,9 @@ bank account or medical information.
 ## Local development
 
 Use the Node version in `screen-ui.lock.json` and the pnpm version in
-`package.json`. The shared screen UI archive is committed; the released app-kit
-receiver is vendored at `app-kit/` and pinned by `app-kit.lock.json` (toolchain
-release v0.3.22). No Cadence checkout is needed.
+`package.json`. The shared screen UI archive is committed; `@cadence/app-kit`
+0.3.0 is vendored at `app-kit/` from `favcrm/cadence`, and `app-kit.lock.json`
+pins the source commit and every file. No Cadence checkout is needed.
 
 ```sh
 pnpm install --frozen-lockfile
@@ -50,7 +50,8 @@ hosted-only storage refusal.
   `storage/001-initial.json` and `storage/002-hr-records.json` pinned by sha256,
   `app-chat.json`, `skills/<tag>/` (five skill packages) and the generated screen
   under `screens/hr/`.
-- `src/bridge/` is the one adapter over the pinned app-kit receiver.
+- `src/bridge/` is the one adapter over the pinned app-kit bridge (`createScreenBridge`): the scope, the
+  operations and their budgets, and the leave hint.
 - `src/domain/` is pure logic: `people.ts` (employees) and `records.ts` (the four new tabs: field
   specs, form to profile, exact lookups, decisions, refusal classes).
 - `src/features/hr/` holds the screen: People, and one generic record pane (`RecordsPane.tsx`) driven by
@@ -80,8 +81,11 @@ The host has no alter-column operation, so 0.1.0 fixes these:
   agent path is not calendar-validated in this release; the screen shows such a value as stored, and its own
   form accepts real calendar dates only.
 
-Language: English and written Hong Kong Chinese. The host sends `zh-TW` for
-Chinese; the catalogue behind it is written in Hong Kong usage.
+Language: English and written Hong Kong Chinese. The screen asks for the host's generic `screen-locale.v1`
+contract, and the host sends `zh-TW` for Chinese; the catalogue behind it is written in Hong Kong usage.
+
+Unsaved edits: while any form holds an edit that is not saved, the screen tells the board
+(`{ v: 2, op: "leave", unsaved: true }`), and the board asks before it navigates away. The hint carries no authority.
 
 ## 0.2.0 storage decisions that cannot change after release
 
@@ -117,10 +121,12 @@ The host reports a refused write as status 400, which the board shows as `failed
 "may already be decided" and offers a reload instead of claiming a cause.
 
 Request size: the board closes a records frame whose `records.create` or `records.update` arguments pass 49,152 bytes
-of JSON, or whose other requests pass 16,384. The screen's receiver is created with the 49,152 limit and the bridge
-holds every other operation to 16,384. A 12,000-character policy or CV in written Chinese (about 36 KB) fits. A larger
-write, such as pasted text full of control characters, is refused in the screen before it is sent: "This text is too
-long to save from this screen."
+of JSON, or whose other requests pass 16,384. The app-kit bridge holds each record write to 49,152 bytes and every
+other operation to 16,384, measured the same way, so nothing the board would close on is sent. A 12,000-character
+policy or CV in written Chinese (about 36 KB) fits. A larger write, such as pasted text full of control characters, is
+refused in the screen before it is sent: "This text is too long to save from this screen." The board also refuses with
+the code `too_large` when a reply is too big to show, after a write ran; the screen words that as "this record may
+already be saved", never as too long.
 
 Unique leave type codes: the screen looks for the code exactly before it creates a leave type, and a code cannot be
 changed once saved. Two creates of the same code at the same moment can still both pass that check; the unique index
@@ -137,7 +143,7 @@ A non-owner member who opens this app sees the board close it. Their first read 
 retires the mount and closes the frame on the first 401 or 403, whatever the app does. A 403 can also mean the
 screen's access was withdrawn or an operation is not declared, so the screen never claims one cause: it says "This
 app's access is no longer available here, or these records are for the workspace owner. Reload the page." and, like
-0.1.0, retires its own session on a 403.
+0.1.0, retires its own session on a 403, on a write as on a read.
 
 ## Verification
 
