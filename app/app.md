@@ -1,7 +1,7 @@
 ---
 app: hr
 title: HR
-version: '0.3.0'
+version: '0.2.0'
 summary: A people directory, company policies, leave requests, expense claims and recruiting that the owner runs and the chat agent can read and stage changes to.
 needs:
   connections: []
