@@ -22,11 +22,11 @@ export default function EmployeeNew({ scope, canWrite, onCreated, onCancel }: {
   const [recordId] = useState(newEmployeeId);
   useEffect(() => { head.current?.focus(); }, []);
 
-  const submit = (fields: Fields) => {
+  const submit = (fields: Fields, settle: () => void) => {
     const profile = buildProfile(fields);
     setPending(true); setProblem(null);
     void createEmployee(scope, recordId, profile)
-      .then((record) => { setSaved(true); onCreated(record.id); })
+      .then((record) => { setSaved(true); settle(); onCreated(record.id); })
       .catch((error: unknown) => setProblem(writeProblem(error, "create", t).problem))
       .finally(() => setPending(false));
   };

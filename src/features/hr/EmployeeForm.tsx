@@ -17,8 +17,9 @@ export interface FieldProblem { field: keyof Fields | null; message: string }
 
 export default function EmployeeForm({ initial, formId, problem, onSubmit, saved = false, children }: {
   initial: Fields; formId: string; problem: FieldProblem | null;
-  /** May throw a FormError; the form shows it under its field. */
-  onSubmit: (fields: Fields) => void;
+  /** May throw a FormError; the form shows it under its field. Call `settle` once the values are stored, before
+   *  moving the screen on, so the board does not warn about edits that are saved. */
+  onSubmit: (fields: Fields, settle: () => void) => void;
   /** The values are stored: the form no longer holds unsaved edits, even if it is still shown. */
   saved?: boolean;
   /** Extra controls under the notice, e.g. the reload button for a stale save. */
@@ -27,7 +28,7 @@ export default function EmployeeForm({ initial, formId, problem, onSubmit, saved
   const { t } = useLocale();
   const [fields, setFields] = useState<Fields>(initial);
   const [local, setLocal] = useState<FieldProblem | null>(null);
-  useUnsavedEdits(!saved && (Object.keys(fields) as (keyof Fields)[]).some((key) => fields[key] !== initial[key]));
+  const settle = useUnsavedEdits(!saved && (Object.keys(fields) as (keyof Fields)[]).some((key) => fields[key] !== initial[key]));
   const set = (patch: Partial<Fields>) => { setFields((prev) => ({ ...prev, ...patch })); setLocal(null); };
   const shown = local ?? problem;
   const err = (field: keyof Fields) => (shown?.field === field ? shown.message : undefined);
@@ -42,7 +43,7 @@ export default function EmployeeForm({ initial, formId, problem, onSubmit, saved
   return (
     <form id={formId} className="grid gap-3" noValidate onSubmit={(e) => {
       e.preventDefault();
-      try { onSubmit(fields); }
+      try { onSubmit(fields, settle); }
       catch (error) { if (error instanceof FormError) setLocal({ field: error.field, message: t(error.message) }); else throw error; }
     }}>
       {text("displayName", "Name", `${formId}-name`, { max: LIMITS.displayName, required: true })}

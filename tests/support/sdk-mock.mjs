@@ -28,5 +28,7 @@ export function sdkMock() {
     options.map((option) => createElement("option", { key: option.value, value: option.value }, option.label)),
   );
   const LocaleTextProvider = ({ children }) => children;
-  return { ApiError, Button, Field, Select, LocaleTextProvider };
+  const Notice = ({ children }) => createElement("div", { role: "status" }, children);
+  const ErrorNotice = ({ children }) => createElement("div", { role: "alert" }, children);
+  return { ApiError, Button, Field, Select, LocaleTextProvider, Notice, ErrorNotice };
 }

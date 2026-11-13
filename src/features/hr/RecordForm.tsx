@@ -12,13 +12,14 @@ const inputType = (f: Spec) => (f.kind === "email" ? "email" : f.kind === "phone
 
 export default function RecordForm({ spec, formId, initial, problem, onSubmit, children }: {
   spec: TableSpec; formId: string; initial: Values; problem: RecordProblem | null;
-  /** May throw a FormError; the form shows it under its field. */
-  onSubmit: (values: Values) => void; children?: React.ReactNode;
+  /** May throw a FormError; the form shows it under its field. Call `settle` once the values are stored, before
+   *  moving the screen on, so the board does not warn about edits that are saved. */
+  onSubmit: (values: Values, settle: () => void) => void; children?: React.ReactNode;
 }) {
   const { t } = useLocale();
   const [values, setValues] = useState<Values>(initial);
   const [local, setLocal] = useState<RecordProblem | null>(null);
-  useUnsavedEdits(Object.keys(values).some((key) => values[key] !== initial[key]));
+  const settle = useUnsavedEdits(Object.keys(values).some((key) => values[key] !== initial[key]));
   const set = (key: string, value: string) => { setValues((prev) => ({ ...prev, [key]: value })); setLocal(null); };
   const shown = local ?? problem;
   const err = (key: string) => (shown?.field === key ? shown.message : undefined);
@@ -38,7 +39,7 @@ export default function RecordForm({ spec, formId, initial, problem, onSubmit, c
   return (
     <form id={formId} className="grid gap-3" noValidate onSubmit={(e) => {
       e.preventDefault();
-      try { onSubmit(values); }
+      try { onSubmit(values, settle); }
       catch (error) { if (error instanceof FormError) setLocal({ field: error.field, message: t(error.message) }); else throw error; }
     }}>
       {spec.fields.map((f) => {

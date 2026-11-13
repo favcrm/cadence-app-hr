@@ -1,5 +1,5 @@
 import type { ScreenLeaveHandle } from "@cadence/app-kit";
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { channel } from "./channel";
 
 // The board's leave warning is one boolean for the whole frame: `{ v: 2, op: "leave", unsaved }`. The receiver lets
@@ -28,11 +28,16 @@ export function markUnsaved(form: symbol, dirty: boolean): void {
   publish();
 }
 
-/** A form's part in the leave warning: `dirty` while it holds unsaved edits, cleared when it unmounts. */
-export function useUnsavedEdits(dirty: boolean): void {
+/**
+ * A form's part in the leave warning: `dirty` while it holds unsaved edits, cleared when it unmounts. The returned
+ * `settle` clears it at once. A save that moves the screen on must call it first: the board checks the warning when
+ * it applies the screen's own route patch, and the effect that would clear it runs only after that patch is sent.
+ */
+export function useUnsavedEdits(dirty: boolean): () => void {
   const form = useRef<symbol | null>(null);
   form.current ??= Symbol("hr-form");
   const key = form.current;
   useEffect(() => { markUnsaved(key, dirty); }, [key, dirty]);
   useEffect(() => () => markUnsaved(key, false), [key]);
+  return useCallback(() => markUnsaved(key, false), [key]);
 }

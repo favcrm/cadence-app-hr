@@ -140,10 +140,10 @@ function NewRecord({ scope, view, canWrite, onCreated, onCancel }: { scope: Host
   const [problem, setProblem] = useState<RecordProblem | null>(null);
   // One id per open form: a retry after a lost reply reuses it, so the host refuses a second create under the same id.
   const [recordId] = useState(() => newRecordId(view.newId));
-  const submit = (values: Values) => {
+  const submit = (values: Values, settle: () => void) => {
     setPending(true); setProblem(null);
     void createRecord(scope, view.spec, recordId, values, view.createExtra)
-      .then((record) => onCreated(record.id))
+      .then((record) => { settle(); onCreated(record.id); })
       .catch((e: unknown) => setProblem(problemFor(e, "create", t)))
       .finally(() => setPending(false));
   };
