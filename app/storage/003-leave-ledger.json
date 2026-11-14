@@ -1,0 +1,20 @@
+{
+  "version": 3,
+  "operations": [
+    {
+      "op": "create_table",
+      "table": "leave_entries",
+      "columns": [
+        {"name": "employee_id", "type": "text", "nullable": false, "max_length": 128, "json_schema": {"type": "string", "pattern": "^[A-Za-z0-9_-]{1,128}$"}},
+        {"name": "leave_type", "type": "text", "nullable": false, "max_length": 32, "json_schema": {"type": "string", "pattern": "^[A-Z0-9_-]{1,32}$"}},
+        {"name": "half_days", "type": "integer", "nullable": false, "json_schema": {"type": "integer", "minimum": -100000, "maximum": 100000}},
+        {"name": "kind", "type": "text", "nullable": false, "max_length": 16, "json_schema": {"type": "string", "pattern": "^[a-z_]{1,16}$"}},
+        {"name": "effective_date", "type": "text", "nullable": false, "max_length": 10, "json_schema": {"type": "string", "pattern": "^[0-9-]{10}$"}},
+        {"name": "source_ref", "type": "text", "nullable": false, "max_length": 200, "json_schema": {"type": "string", "pattern": "^[A-Za-z0-9_-]{1,200}$"}},
+        {"name": "note", "type": "text", "nullable": true, "max_length": 500}
+      ]
+    },
+    {"op": "create_index", "table": "leave_entries", "name": "leave_entries_source_ref", "columns": ["source_ref"], "unique": true},
+    {"op": "create_index", "table": "leave_entries", "name": "leave_entries_employee", "columns": ["employee_id"], "unique": false}
+  ]
+}

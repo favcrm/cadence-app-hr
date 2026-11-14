@@ -4,6 +4,7 @@ import {
   type Decision, type Failure, type ListFn, type TableSpec, type Values,
 } from "../../domain/records";
 import { loadStarterLeaveTypes, STARTER_LEAVE_TYPES, type StarterPort } from "../../domain/leave-starter";
+import { approveLeave, rejectLeave } from "./ledger";
 import { hostActions, type HostActions, type HostRecord, type HostScope } from "./hostActions";
 import { FORBIDDEN_TEXT, SESSION_EXPIRED_TEXT } from "./hostErrors";
 
@@ -38,8 +39,12 @@ export async function updateRecord(scope: HostScope, spec: TableSpec, record: Ho
   if ("leave_type" in patch) await assertLeaveTypeExists(listFor(scope, actions), String(patch.leave_type));
   return actions.update(scope, record.id, record.revision, patch, spec.table);
 }
-/** An owner decision writes status, the decision date and the note, nothing else. */
+/**
+ * An owner decision writes status, the decision date and the note, nothing else. A leave request first writes (approve)
+ * or checks for (reject) its `taken` ledger entry; see `approveLeave` and `rejectLeave`.
+ */
 export function decide(scope: HostScope, spec: TableSpec, record: HostRecord, decision: Decision, today: string, note: string, actions: HostActions = hostActions) {
+  if (spec.table === "leave_requests") return (decision === "approved" ? approveLeave : rejectLeave)(scope, record, today, note, actions);
   return actions.update(scope, record.id, record.revision, decisionPatch(decision, today, note), spec.table);
 }
 /** A one-field change the owner makes from a drawer (a candidate's stage, an opening's status). */

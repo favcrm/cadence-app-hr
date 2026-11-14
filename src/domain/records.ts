@@ -1,6 +1,7 @@
 // Pure record logic shared by the Policies, Leave, Claims and Recruiting tabs: field specs, the form
 // to profile conversion, exact lookups, decisions and failure wording. No host, DOM or React.
 // Column names, patterns and bounds mirror app/storage/002-hr-records.json; tests keep them in step.
+import { parseSignedHalfDays, RULE_KEPT, ruleToText, ruleJson, textToTiers } from "./leave";
 import { realDate } from "./people";
 
 export { realDate };
@@ -9,7 +10,7 @@ const UCODE = /^[A-Z0-9_-]{1,32}$/;
 const ID = /^[A-Za-z0-9_-]{1,128}$/;
 const length = (s: string) => Array.from(s).length;
 
-export type Kind = "text" | "longtext" | "ucode" | "code" | "date" | "days" | "money" | "email" | "phone" | "lookup";
+export type Kind = "text" | "longtext" | "ucode" | "code" | "date" | "days" | "sdays" | "money" | "email" | "phone" | "lookup" | "accrual";
 export interface Field {
   /** Form key. */
   key: string;
@@ -55,6 +56,7 @@ export const LEAVE_TYPE: TableSpec = { table: "leave_types", noun: "leave type",
   { key: "code", column: "code", label: "Code", kind: "ucode", required: true, max: 32, fixed: true, hint: "Unique, and cannot be changed once saved. Capitals, digits, - and _" },
   { key: "name", column: "name", label: "Name", kind: "text", required: true, max: 80 },
   { key: "paid", column: "paid", label: "Paid leave", kind: "code", options: ["yes", "no"] },
+  { key: "accrual", column: "accrual_rule", label: "Leave accrued each month", kind: "accrual", hint: "Optional. Yearly days by completed years of service, added month by month when you run accrual. Leave it empty if this leave type does not accrue." },
 ] };
 export const LEAVE_REQUEST: TableSpec = { table: "leave_requests", noun: "leave request", fields: [
   { key: "employeeNo", label: "Employee number", kind: "lookup", required: true, max: 32 },
@@ -63,6 +65,14 @@ export const LEAVE_REQUEST: TableSpec = { table: "leave_requests", noun: "leave 
   { key: "endDate", column: "end_date", label: "Last day", kind: "date", required: true, hint: "YYYY-MM-DD" },
   { key: "days", column: "half_days", label: "Days of leave", kind: "days", required: true, hint: "Whole or half days, for example 1.5" },
   { key: "reason", column: "reason", label: "Reason (optional)", kind: "longtext", max: 500, hint: "No medical detail" },
+] };
+/** The owner's correction of a balance: a new `adjustment` entry. The employee is looked up by number, like a request's. */
+export const ADJUSTMENT: TableSpec = { table: "leave_entries", noun: "adjustment", fields: [
+  { key: "employeeNo", label: "Employee number", kind: "lookup", required: true, max: 32 },
+  { key: "leaveType", column: "leave_type", label: "Leave type code", kind: "ucode", required: true, max: 32 },
+  { key: "days", column: "half_days", label: "Days to add or remove", kind: "sdays", required: true, hint: "Use a minus sign to remove, for example -1.5" },
+  { key: "effectiveDate", column: "effective_date", label: "Effective date", kind: "date", required: true, hint: "YYYY-MM-DD" },
+  { key: "note", column: "note", label: "Note", kind: "longtext", required: true, max: 500, hint: "Why the balance is being corrected" },
 ] };
 export const CLAIM: TableSpec = { table: "claims", noun: "claim", fields: [
   { key: "employeeNo", label: "Employee number", kind: "lookup", required: true, max: 32 },
@@ -132,8 +142,8 @@ const SHAPE: Record<string, RegExp> = { email: /^[^\s@]+@[^\s@.]+(\.[^\s@.]+)+$/
 function validPhone(v: string) { return length(v) >= 7 && /^[0-9 +().-]+$/.test(v) && (v.match(/[0-9]/g) ?? []).length >= 7; }
 
 /** Trim and check the form, and return the profile fields to send. Form-only fields are skipped. Blank optional fields become explicit null where the column is nullable. */
-export function buildProfile(spec: TableSpec, values: Values): Record<string, string | number | boolean | null> {
-  const out: Record<string, string | number | boolean | null> = {};
+export function buildProfile(spec: TableSpec, values: Values): Record<string, string | number | boolean | object | null> {
+  const out: Record<string, string | number | boolean | object | null> = {};
   for (const f of spec.fields) {
     const raw = (values[f.key] ?? "").trim();
     const v = f.kind === "ucode" ? raw.toUpperCase() : raw;
@@ -141,6 +151,13 @@ export function buildProfile(spec: TableSpec, values: Values): Record<string, st
     if (f.max !== undefined && length(v) > f.max) throw new FormError(f.key, "This is too long.");
     switch (f.kind) {
       case "lookup": continue;
+      case "accrual": {
+        if (v === RULE_KEPT) continue; // a stored rule the screen cannot read is kept unless the owner replaces it
+        if (v === "") { out[f.column!] = null; continue; }
+        const tiers = textToTiers(v);
+        if (tiers === null) throw new FormError(f.key, "Give each step its completed years and days, rising from 0 years. Days are whole or half days.");
+        out[f.column!] = ruleJson(tiers); continue;
+      }
       case "ucode": if (!UCODE.test(v)) throw new FormError(f.key, "Use capitals, digits, - and _ only (up to 32)."); break;
       case "code": if (!(f.options!.includes(v) || CODE.test(v)) || v === "") throw new FormError(f.key, "Choose a value from the list."); break;
       case "date": if (v !== "" && !realDate(v)) throw new FormError(f.key, "Enter the date as YYYY-MM-DD."); break;
@@ -149,6 +166,7 @@ export function buildProfile(spec: TableSpec, values: Values): Record<string, st
       default: break;
     }
     if (!f.column) continue;
+    if (f.kind === "sdays") { const n = parseSignedHalfDays(v); if (n === null) throw new FormError(f.key, "Enter whole or half days other than 0, for example 2 or -1.5."); out[f.column] = n; continue; }
     if (f.kind === "days") { const n = toHalfDays(v); if (n === null) throw new FormError(f.key, "Enter whole or half days, for example 1.5."); out[f.column] = n; continue; }
     if (f.kind === "money") {
       const currency = (values[f.currencyKey!] ?? "").trim();
@@ -176,7 +194,8 @@ export function viewValues(spec: TableSpec, profile: unknown): Values {
   const currency = typeof p.currency === "string" ? p.currency : "";
   for (const f of spec.fields) {
     const v = f.column ? p[f.column] : undefined;
-    out[f.key] = f.kind === "days" && Number.isSafeInteger(v) ? fromHalfDays(v as number)
+    out[f.key] = f.kind === "accrual" ? ruleToText(v)
+      : f.kind === "days" && Number.isSafeInteger(v) ? fromHalfDays(v as number)
       : f.kind === "money" && Number.isSafeInteger(v) ? fromMinor(v as number, currency)
       : f.column === "paid" ? (v === true ? "yes" : v === false ? "no" : "")
       : typeof v === "string" ? v : "";
@@ -186,7 +205,9 @@ export function viewValues(spec: TableSpec, profile: unknown): Values {
 /** An update carries only the fields that changed; the host keeps the rest. */
 export function changedFields(before: unknown, next: Record<string, unknown>): Record<string, unknown> {
   const old = (before && typeof before === "object" ? before : {}) as Record<string, unknown>;
-  return Object.fromEntries(Object.entries(next).filter(([k, v]) => (old[k] ?? null) !== v));
+  // A JSON column (the accrual rule) compares by value; the other columns are scalars.
+  const same = (a: unknown, b: unknown) => (typeof b === "object" && b !== null ? JSON.stringify(a ?? null) === JSON.stringify(b) : (a ?? null) === b);
+  return Object.fromEntries(Object.entries(next).filter(([k, v]) => !same(old[k], v)));
 }
 export function newRecordId(prefix: string, random: (n: Uint8Array) => void = (n) => crypto.getRandomValues(n)): string {
   const bytes = new Uint8Array(9);

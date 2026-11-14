@@ -2,9 +2,9 @@
   "contract": "app-storage/v1",
   "app": "hr",
   "record_kind": "employee",
-  "schema_version": 2,
+  "schema_version": 3,
   "compatible_schema_versions": [
-    2
+    3
   ],
   "default_table": "employees",
   "migrations": [
@@ -17,6 +17,11 @@
       "version": 2,
       "path": "storage/002-hr-records.json",
       "sha256": "sha256:3e9227727792d7ae3bda0d7b523fbd0ca95eebac15f93053a711e5496451318b"
+    },
+    {
+      "version": 3,
+      "path": "storage/003-leave-ledger.json",
+      "sha256": "sha256:11d19be5a74eb3dfad4c0d76eca5c751c40897329b9fe6f6187ec81523a40dea"
     }
   ],
   "record_search_columns": [
@@ -41,7 +46,65 @@
         "code",
         "name"
       ],
-      "read_role": "owner"
+      "read_role": "owner",
+      "write_schema": {
+        "type": "object",
+        "properties": {
+          "after": {
+            "type": "object",
+            "properties": {
+              "accrual_rule": {
+                "anyOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "v": {
+                        "const": 1
+                      },
+                      "days_per_year": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 20,
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "from_years": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 80
+                            },
+                            "days": {
+                              "type": "number",
+                              "minimum": 0,
+                              "maximum": 366
+                            }
+                          },
+                          "required": [
+                            "from_years",
+                            "days"
+                          ],
+                          "additionalProperties": false
+                        }
+                      }
+                    },
+                    "required": [
+                      "v",
+                      "days_per_year"
+                    ],
+                    "additionalProperties": false
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "required": [
+          "after"
+        ]
+      }
     },
     "leave_requests": {
       "search_columns": [
@@ -254,6 +317,174 @@
         "email",
         "cv_text"
       ],
+      "read_role": "owner"
+    },
+    "leave_entries": {
+      "write_schema": {
+        "type": "object",
+        "properties": {
+          "operation": {
+            "const": "create"
+          },
+          "after": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "enum": [
+                  "accrual",
+                  "taken",
+                  "adjustment",
+                  "carry_forward",
+                  "expiry"
+                ]
+              },
+              "half_days": {
+                "type": "integer",
+                "not": {
+                  "const": 0
+                }
+              }
+            },
+            "required": [
+              "kind",
+              "half_days"
+            ]
+          }
+        },
+        "required": [
+          "operation",
+          "after"
+        ],
+        "allOf": [
+          {
+            "if": {
+              "type": "object",
+              "properties": {
+                "after": {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "enum": [
+                        "accrual",
+                        "carry_forward"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "kind"
+                  ]
+                }
+              },
+              "required": [
+                "after"
+              ]
+            },
+            "then": {
+              "type": "object",
+              "properties": {
+                "after": {
+                  "type": "object",
+                  "properties": {
+                    "half_days": {
+                      "type": "integer",
+                      "minimum": 1
+                    }
+                  }
+                }
+              },
+              "required": [
+                "after"
+              ]
+            }
+          },
+          {
+            "if": {
+              "type": "object",
+              "properties": {
+                "after": {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "enum": [
+                        "taken",
+                        "expiry"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "kind"
+                  ]
+                }
+              },
+              "required": [
+                "after"
+              ]
+            },
+            "then": {
+              "type": "object",
+              "properties": {
+                "after": {
+                  "type": "object",
+                  "properties": {
+                    "half_days": {
+                      "type": "integer",
+                      "maximum": -1
+                    }
+                  }
+                }
+              },
+              "required": [
+                "after"
+              ]
+            }
+          },
+          {
+            "if": {
+              "type": "object",
+              "properties": {
+                "after": {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "enum": [
+                        "adjustment"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "kind"
+                  ]
+                }
+              },
+              "required": [
+                "after"
+              ]
+            },
+            "then": {
+              "type": "object",
+              "properties": {
+                "after": {
+                  "type": "object",
+                  "properties": {
+                    "note": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 500
+                    }
+                  },
+                  "required": [
+                    "note"
+                  ]
+                }
+              },
+              "required": [
+                "after"
+              ]
+            }
+          }
+        ]
+      },
+      "append_only": true,
       "read_role": "owner"
     }
   }
