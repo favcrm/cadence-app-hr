@@ -5,13 +5,14 @@ import { zhHK } from "./localeCatalog";
 // The host pushes `en` or `zh-TW` (its only Chinese value); the catalog behind
 // `zh-TW` is written in Hong Kong usage, which is the written zh-HK this app ships.
 type Locale = "en" | "zh-TW";
-type LocaleValue = { t: (english: string) => string; formatNumber: (value: number) => string; formatDate: (ms: number, options?: Intl.DateTimeFormatOptions) => string };
+type LocaleValue = { locale: Locale; t: (english: string) => string; formatNumber: (value: number) => string; formatDate: (ms: number, options?: Intl.DateTimeFormatOptions) => string };
 const identity = (english: string) => english;
-const LocaleContext = createContext<LocaleValue>({ t: identity, formatNumber: (n) => new Intl.NumberFormat("en").format(n), formatDate: (ms, o) => new Intl.DateTimeFormat("en", o).format(ms) });
+const LocaleContext = createContext<LocaleValue>({ locale: "en", t: identity, formatNumber: (n) => new Intl.NumberFormat("en").format(n), formatDate: (ms, o) => new Intl.DateTimeFormat("en", o).format(ms) });
 
 /** Host-selected display data only. No preferences, session or authority access. */
 export function HrLocaleProvider({ locale, children }: { locale: Locale; children: ReactNode }) {
   const value = useMemo<LocaleValue>(() => ({
+    locale,
     t: locale === "zh-TW" ? (english) => zhHK[english] ?? english : identity,
     formatNumber: (n) => new Intl.NumberFormat(locale === "zh-TW" ? "zh-HK" : "en").format(n),
     formatDate: (ms, o) => new Intl.DateTimeFormat(locale === "zh-TW" ? "zh-HK" : "en", o).format(ms),

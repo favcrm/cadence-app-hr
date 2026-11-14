@@ -9,7 +9,23 @@ installability or safety.
 Usage: assert-app-check.py [report.json]
 """
 import json
+import re
 import sys
+
+# The checker joins every content refusal into one message, after this prefix and
+# separated by "; ". The storage refusal must be the only clause: a second clause
+# (for example a screen package that failed integrity) is a failed check even when
+# the storage clause is also present.
+PREFIX = "app is not installable — "
+STORAGE_CLAUSE = re.compile(r"app requires host contract 'app-storage' major \d+ — this host supports [^;]*")
+
+
+def storage_only(message):
+    if not message.startswith(PREFIX):
+        return False
+    clauses = message[len(PREFIX):].split("; ")
+    return len(clauses) == 1 and STORAGE_CLAUSE.fullmatch(clauses[0]) is not None
+
 
 path = sys.argv[1] if len(sys.argv) > 1 else "/tmp/app-check.json"
 try:
@@ -31,7 +47,7 @@ digest = report.get("digest")
 files = report.get("files")
 if (
     bad == {"app-storage"}
-    and "app-storage" in refusal
+    and storage_only(refusal)
     and isinstance(digest, str)
     and digest.startswith("sha256:")
     and isinstance(files, list)

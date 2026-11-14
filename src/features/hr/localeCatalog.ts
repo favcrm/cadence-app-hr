@@ -100,6 +100,16 @@ export const zhHK: Record<string, string> = {
   "This text is too long to save from this screen. Shorten it, then save again.": "文字太長，無法在此畫面儲存。請先縮短，然後再儲存。",
   "This app's access is no longer available here, or these records are for the workspace owner. Reload the page.": "此應用程式在這裏的存取權限已不再可用，或這些記錄只供工作區擁有者使用。請重新載入頁面。",
   "The change was not saved. Check the fields, or the record may already be decided or changed. Reload and look, then try again.": "未有儲存這項修改。請檢查各欄位；記錄也可能已有決定或已被更改。請重新載入查看，然後再試。",
+  // Starter leave types
+  "No leave types yet": "暫時沒有假期類別",
+  "Leave requests need a leave type. You can add a small starter set — annual, sick, unpaid and time off in lieu — and then edit or add to it to match your own policy.": "請假申請需要先有假期類別。你可加入一組簡單的預設類別（年假、病假、無薪假及補假），再按公司政策修改或增補。",
+  "The starter set is a generic template, not legal advice. It holds no entitlement figures. A code cannot be changed once saved.": "預設類別只是通用範本，並非法律意見，亦不包含任何假期日數。代碼儲存後不可更改。",
+  "Add common leave types": "加入常用假期類別",
+  "The common leave types are ready. Edit them to match your own policy.": "常用假期類別已準備好。請按公司政策修改。",
+  "Adding leave types… {done} of {total}": "正在加入假期類別… {done} / {total}",
+  "Only {done} of {total} common leave types are in place.": "只有 {done} 個（共 {total} 個）常用假期類別已加入。",
+  "The common leave types were not added.": "未有加入常用假期類別。",
+  "Choose Add common leave types again to add the rest. Leave types already added are kept and are not added twice.": "請再按「加入常用假期類別」以加入其餘項目。已加入的假期類別會保留，不會重複加入。",
   // Stored values the screen shows as words
   "Benefits": "福利", "General": "一般", "Attendance": "考勤", "Draft": "草稿", "Current": "現行", "Retired": "已停用", "Travel": "交通", "Meals": "餐飲", "Supplies": "用品", "Other": "其他",
   "Open": "招聘中", "Closed": "已截止", "New": "新增", "Interview": "面試", "Offer": "聘用條件", "Hired": "已聘用", "Rejected": "已拒絕", "Pending": "待處理", "Approved": "已批准", "Cancelled": "已取消",
