@@ -3,6 +3,7 @@ import {
   assertLeaveCodeFree, assertLeaveTypeExists, buildProfile, changedFields, checkRequestDates, classify, decisionPatch, editable, FormError, resolveEmployee,
   type Decision, type Failure, type ListFn, type TableSpec, type Values,
 } from "../../domain/records";
+import { loadStarterLeaveTypes, STARTER_LEAVE_TYPES, type StarterPort } from "../../domain/leave-starter";
 import { hostActions, type HostActions, type HostRecord, type HostScope } from "./hostActions";
 import { FORBIDDEN_TEXT, SESSION_EXPIRED_TEXT } from "./hostErrors";
 
@@ -67,4 +68,39 @@ export function problemFor(error: unknown, operation: "create" | "update", t: (s
   if (error instanceof FormError) return { field: error.field, message: t(error.message), kind: "form", reload: false };
   const kind = classify(error instanceof ApiError ? error : null, operation);
   return { field: null, message: t(kind === "session" ? SESSION_EXPIRED_TEXT : TEXT[kind]), kind, reload: kind === "stale" || kind === "changed" || kind === "rejected" };
+}
+
+/** The leave type with exactly this code, under whatever record id, or null. A failed read throws: it is never "none". */
+const storedCodes = async (scope: HostScope, codes: readonly string[], actions: HostActions): Promise<Set<string>> => {
+  const page = await actions.list(scope, { table: "leave_types", filters: [{ field: "code", op: "in", value: [...codes] }], limit: 100 });
+  return new Set(page.records.map((r) => (r.profile as { code?: unknown } | null)?.code).filter((c): c is string => typeof c === "string"));
+};
+const ALL_CODES = STARTER_LEAVE_TYPES.map((row) => row.code);
+
+/**
+ * The starter set, one create at a time under fixed record ids. Only a code that a re-read proves is stored counts as
+ * "exists": under the same id the host answers a conflict, under another id its unique index answers a store failure
+ * (503 today, 409 later), and neither is called a duplicate without that read.
+ */
+export function starterPort(scope: HostScope, actions: HostActions = hostActions): StarterPort {
+  return {
+    existingCodes: () => storedCodes(scope, ALL_CODES, actions),
+    async create(item) {
+      try {
+        await actions.create(scope, item.record_id, item.profile, "leave_types");
+        return "created";
+      } catch (error) {
+        if (error instanceof ApiError && [409, 503].includes(error.status) && (await storedCodes(scope, [item.profile.code], actions)).has(item.profile.code)) return "exists";
+        throw error;
+      }
+    },
+  };
+}
+export const addStarterLeaveTypes = (scope: HostScope, locale: "en" | "zh-TW", onProgress?: (done: number, total: number) => void, actions: HostActions = hostActions) =>
+  loadStarterLeaveTypes(starterPort(scope, actions), locale, onProgress);
+
+/** The cause of a stopped load, when the owner can act on it; any other failure is not named. */
+export function starterReason(error: unknown): string | null {
+  const kind = classify(error instanceof ApiError ? error : null, "create");
+  return kind === "session" ? SESSION_EXPIRED_TEXT : kind === "forbidden" ? FORBIDDEN_TEXT : null;
 }

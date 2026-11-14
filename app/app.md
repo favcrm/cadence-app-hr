@@ -1,7 +1,7 @@
 ---
 app: hr
 title: HR
-version: '0.2.0'
+version: '0.2.1'
 summary: A people directory, company policies, leave requests, expense claims and recruiting that the owner runs and the chat agent can read and stage changes to.
 needs:
   connections: []
@@ -36,6 +36,10 @@ listing:
 Release 0.2.0 adds six tables beside `employees`: `policies`, `leave_types`, `leave_requests`, `claims`,
 `job_openings` and `candidates`, four tabs (Policies, Leave, Claims, Recruiting) and five skills the hosted
 chat agent can read. Leave balances, payroll and staff self-service are later releases.
+
+Release 0.2.1 changes no storage. On Leave → Leave types, an empty list now offers the owner "Add common leave types":
+a small editable starter set (Annual, Sick, Unpaid, Time off in lieu) written one row at a time. It is a generic template,
+not legal advice, and carries no entitlement figures. The `leave-desk` skill points the owner to it when no leave type exists.
 
 The package requires `app-screens`, `screen-records`, `screen-startup` and `app-storage` v1. The screen under
 `screens/hr/` uses the host's pinned screen UI and the released app-kit receiver; Cadence keeps scope, storage,

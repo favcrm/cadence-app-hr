@@ -35,7 +35,7 @@ export const leaveRequestsView: View = {
   extra: (p, t) => [{ key: "employee", term: t("Employee"), value: s(p.employee_name) }, { key: "status", term: t("Status"), value: chip(p.status, t) }, ...decided(p, t)],
 };
 export const leaveTypesView: View = {
-  id: "leave-types", title: "Leave types", spec: LEAVE_TYPE, newLabel: "Add leave type", searchHint: "Search leave types…", kind: "plain", newId: "lt",
+  id: "leave-types", title: "Leave types", spec: LEAVE_TYPE, newLabel: "Add leave type", searchHint: "Search leave types…", kind: "plain", newId: "lt", starter: "leave-types",
   columns: (p, t) => [
     { key: "code", header: t("Code"), cell: s(p.code), className: "text-ink-100 hr-nowrap" },
     { key: "name", header: t("Name"), cell: s(p.name) },

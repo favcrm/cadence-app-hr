@@ -14,6 +14,25 @@ The app stores names, employee numbers, contact details, leave and claim records
 policy text and candidates' CV text. It holds no pay, identity document number,
 bank account or medical information.
 
+## 0.2.1: starter leave types
+
+A fresh install has no leave types, so nobody can file leave and the assistant (correctly) will not guess a type. On
+Leave → Leave types, when the list is empty, the owner sees a short explanation and **Add common leave types**
+(假期類別 → 加入常用假期類別). It creates `ANNUAL` (Annual leave, paid), `SICK` (Sick leave, paid), `UNPAID` (Unpaid
+leave, unpaid) and `COMP` (Time off in lieu, paid) with the existing `leave_types` columns only; `accrual_rule` stays
+empty. It is a generic template to edit, with no entitlement figures and no legal advice. No storage migration.
+
+- The rows are created one at a time under fixed record ids (`lt-starter-<code>`), not with `records.batch`: the
+  native checker the CI pins (and the latest released `cadence`, 0.3.22) refuses a screen that declares
+  `records.batch`, and `assert-app-check.py` accepts only the storage refusal. Move to one `records.batch` once a
+  released checker knows it (it would be one transaction, so no partial state).
+- The action is offered only while the list is empty. If a load stops part-way, the panel stays with the count that is
+  in place; choosing the button again adds only the codes that are missing, and existing leave types are never touched.
+  The stored name follows the owner's language at the time (English or written Hong Kong Chinese); the code does not.
+- `.github/scripts/assert-app-check.py` accepts a native app-check report only when its single clause after
+  `app is not installable — ` (split on `; `) is the app-storage contract refusal (the same fix as the Accounting
+  app); `tests/unit/test_assert_app_check.py` runs in CI with the other Python tests.
+
 ## Local development
 
 Use the Node version in `screen-ui.lock.json` and the pnpm version in

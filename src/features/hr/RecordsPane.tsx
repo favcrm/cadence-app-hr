@@ -14,8 +14,9 @@ import ListPager, { LIST_PAGE_SIZE } from "./ListPager";
 import { useLocale } from "./locale";
 import RecordForm, { optionLabel, type RecordProblem } from "./RecordForm";
 import { listArgs, showArgs } from "./recordQueries";
-import { createRecord, decide, problemFor, setField, updateRecord, type Problem } from "./recordsSubmit";
+import { addStarterLeaveTypes, createRecord, decide, problemFor, setField, starterReason, updateRecord, type Problem } from "./recordsSubmit";
 import { QueryRefresh, useHrQuery } from "./resources";
+import StarterLeaveTypes, { type StarterState } from "./StarterLeaveTypes";
 
 type Cells = Record<string, unknown>;
 export interface View {
@@ -35,6 +36,8 @@ export interface View {
   extra?: (p: Cells, t: (s: string) => string) => { key: string; term: string; value: ReactNode }[];
   filters?: RecordFilter[];
   createExtra?: Record<string, string>;
+  /** An empty, unfiltered list offers the owner this starter set (the leave types). */
+  starter?: "leave-types";
   /** When false the New button is disabled with this reason. */
   blockedNew?: string;
   newId: string;
@@ -51,7 +54,7 @@ const DECISION_TEXT: Record<Decision, { title: string; body: string; confirm: st
 export default function RecordsPane({ scope, canWrite, view, recordId, onSelect, onClose }: {
   scope: HostScope; canWrite: boolean; view: View; recordId: string | null; onSelect: (id: string) => void; onClose: () => void;
 }) {
-  const { t, formatNumber } = useLocale();
+  const { t, formatNumber, locale } = useLocale();
   const [creating, setCreating] = useState(false);
   const [query, setQuery] = useState("");
   const [committed, setCommitted] = useState("");
@@ -82,6 +85,19 @@ export default function RecordsPane({ scope, canWrite, view, recordId, onSelect,
   const head = records[0] ? columns(records[0]) : view.columns({}, t);
   const summary = t("{count} on this page").replace("{count}", formatNumber(records.length)) + (total !== null ? ` · ${t("{total} in total").replace("{total}", formatNumber(total))}` : "");
   const filtered = status !== "all" || committed !== "";
+  // The starter load's state lives here, not in the panel, so a search or a refresh cannot lose a running load or start a second.
+  const [starter, setStarter] = useState<StarterState>({ phase: "idle" });
+  const [starterAdded, setStarterAdded] = useState(false);
+  const runStarter = () => {
+    if (starter.phase === "running") return;
+    let done = 0;
+    setStarter({ phase: "running", done: 0 }); setStarterAdded(false);
+    void addStarterLeaveTypes(scope, locale, (count) => { done = count; setStarter({ phase: "running", done: count }); }).then(
+      () => { setStarter({ phase: "idle" }); setStarterAdded(true); },
+      (e: unknown) => setStarter({ phase: "stopped", done, reason: starterReason(e) }),
+    );
+  };
+  const offerStarter = view.starter === "leave-types" && !filtered;
 
   if (creating) {
     return <NewRecord scope={scope} view={view} canWrite={canWrite} onCancel={() => setCreating(false)} onCreated={(id) => { setCreating(false); onSelect(id); }} />;
@@ -105,11 +121,20 @@ export default function RecordsPane({ scope, canWrite, view, recordId, onSelect,
       {view.blockedNew && canWrite && <p className="text-label text-ink-400">{t(view.blockedNew)}</p>}
       {loading && <Loading>{t("Reading the records…")}</Loading>}
       {error !== null && !loading && <ErrorNotice onRetry={() => void state.store.refresh()}>{t(hostErrorText(state.failure, error))}</ErrorNotice>}
-      {error === null && !loading && records.length === 0 && (
+      {starterAdded && <Notice className="mb-2" state="saved">{t("The common leave types are ready. Edit them to match your own policy.")}</Notice>}
+      {offerStarter && starter.phase !== "idle" && records.length > 0 && <StarterLeaveTypes state={starter} canWrite={canWrite} onRun={runStarter} />}
+      {error === null && !loading && records.length === 0 && !starterAdded && (offerStarter ? (
+        <>
+          <EmptyState name={view.id} title={t("No leave types yet")}>
+            {t("Leave requests need a leave type. You can add a small starter set — annual, sick, unpaid and time off in lieu — and then edit or add to it to match your own policy.")}
+          </EmptyState>
+          <StarterLeaveTypes state={starter} canWrite={canWrite} onRun={runStarter} />
+        </>
+      ) : (
         <EmptyState name={view.id} title={t(filtered ? "Nothing matches this view" : "Nothing here yet")}>
           {filtered ? t("Clear the search or choose All to see everything.") : t(canWrite ? "Add the first one with the button above." : "Nothing has been added yet.")}
         </EmptyState>
-      )}
+      ))}
       <span role="status"><QueryRefresh updating={state.updating} /></span>
       {(records.length > 0 || page > 0) && (
         <>
