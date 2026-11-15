@@ -18,10 +18,10 @@ test("every case gets the expected verdict from the declared write schema", () =
   for (const c of cases) expect([c.name, run(descriptor.tables[c.table].write_schema, c)]).toEqual([c.name, c.ok]);
 });
 
-test("the tables that declare a write schema are the decision tables, the ledger and leave types; every table is owner-only", () => {
-  expect(Object.entries(descriptor.tables).filter(([, o]) => o.write_schema).map(([n]) => n).sort()).toEqual(["claims", "leave_entries", "leave_requests", "leave_types"]);
+test("the tables that declare a write schema are the decision tables, the ledgers, leave types and payroll; every table is owner-only", () => {
+  expect(Object.entries(descriptor.tables).filter(([, o]) => o.write_schema).map(([n]) => n).sort()).toEqual(["claims", "leave_entries", "leave_requests", "leave_types", "payroll_lines", "payroll_runs", "postings", "salaries"]);
   for (const o of Object.values(descriptor.tables)) expect(o.read_role).toBe("owner");
-  expect(Object.keys(descriptor.tables).sort()).toEqual(["candidates", "claims", "employees", "job_openings", "leave_entries", "leave_requests", "leave_types", "policies"]);
+  expect(Object.keys(descriptor.tables).sort()).toEqual(["candidates", "claims", "employees", "job_openings", "leave_entries", "leave_requests", "leave_types", "payroll_lines", "payroll_runs", "policies", "postings", "rate_tables", "salaries"]);
 });
 
 test("the ledger rules discriminate: each removed rule flips a verdict", () => {
@@ -74,5 +74,22 @@ test("a create cannot carry decided metadata: dropping the null rule flips those
     const decided = cases.filter((c) => c.table === table && c.operation === "create" && (c.after.decided_on !== null || c.after.decision_note !== null));
     expect(decided.length).toBe(2);
     for (const c of decided) { expect(run(schema, c)).toBe(false); expect(run(loose, c)).toBe(true); }
+  }
+});
+
+test("an approved payroll run is frozen and a posted posting is final: each removed rule flips a verdict", () => {
+  for (const table of ["payroll_runs", "postings"]) {
+    const schema = descriptor.tables[table].write_schema;
+    const mine = cases.filter((c) => c.table === table);
+    expect(mine.length).toBeGreaterThanOrEqual(9);
+    for (let i = 0; i < schema.allOf.length; i += 1) {
+      const without = structuredClone(schema); without.allOf.splice(i, 1);
+      expect([table, i, mine.some((c) => run(without, c) !== c.ok)]).toEqual([table, i, true]);
+    }
+  }
+  // The literal acceptance item: no update of an approved run passes, whatever it changes.
+  const runs = descriptor.tables.payroll_runs.write_schema;
+  for (const after of [{ status: "approved", decided_on: "2026-02-01" }, { status: "approved", decided_on: "2026-02-01", period: "2026-02" }, { status: "draft" }, { status: "cancelled", decided_on: "2026-02-02" }]) {
+    expect(run(runs, { operation: "update", before: { status: "approved", decided_on: "2026-02-01" }, after })).toBe(false);
   }
 });

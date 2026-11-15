@@ -2,9 +2,9 @@
   "contract": "app-storage/v1",
   "app": "hr",
   "record_kind": "employee",
-  "schema_version": 3,
+  "schema_version": 4,
   "compatible_schema_versions": [
-    3
+    4
   ],
   "default_table": "employees",
   "migrations": [
@@ -22,6 +22,11 @@
       "version": 3,
       "path": "storage/003-leave-ledger.json",
       "sha256": "sha256:11d19be5a74eb3dfad4c0d76eca5c751c40897329b9fe6f6187ec81523a40dea"
+    },
+    {
+      "version": 4,
+      "path": "storage/004-payroll.json",
+      "sha256": "sha256:c556a4f2cd1a94fc308fa94c732b57875cac58def8cb33b7ca4a22fdf823610c"
     }
   ],
   "record_search_columns": [
@@ -485,6 +490,363 @@
         ]
       },
       "append_only": true,
+      "read_role": "owner"
+    },
+    "rate_tables": {
+      "append_only": true,
+      "read_role": "owner"
+    },
+    "salaries": {
+      "write_schema": {
+        "type": "object",
+        "properties": {
+          "operation": {
+            "const": "create"
+          },
+          "after": {
+            "type": "object",
+            "properties": {
+              "currency": {
+                "const": "HKD"
+              }
+            },
+            "required": [
+              "currency"
+            ]
+          }
+        },
+        "required": [
+          "operation",
+          "after"
+        ]
+      },
+      "append_only": true,
+      "read_role": "owner"
+    },
+    "payroll_runs": {
+      "write_schema": {
+        "type": "object",
+        "properties": {
+          "operation": {
+            "enum": [
+              "create",
+              "update"
+            ]
+          },
+          "after": {
+            "type": "object",
+            "properties": {
+              "status": {
+                "enum": [
+                  "draft",
+                  "approved",
+                  "cancelled"
+                ]
+              }
+            },
+            "required": [
+              "status"
+            ]
+          }
+        },
+        "required": [
+          "operation",
+          "after"
+        ],
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "operation": {
+                  "const": "create"
+                }
+              },
+              "required": [
+                "operation"
+              ]
+            },
+            "then": {
+              "properties": {
+                "after": {
+                  "properties": {
+                    "status": {
+                      "const": "draft"
+                    },
+                    "decided_on": {
+                      "type": "null"
+                    },
+                    "decision_note": {
+                      "type": "null"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "operation": {
+                  "const": "update"
+                }
+              },
+              "required": [
+                "operation"
+              ]
+            },
+            "then": {
+              "properties": {
+                "before": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "const": "draft"
+                    }
+                  },
+                  "required": [
+                    "status"
+                  ]
+                }
+              },
+              "required": [
+                "before"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "after": {
+                  "properties": {
+                    "status": {
+                      "enum": [
+                        "approved",
+                        "cancelled"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "status"
+                  ]
+                }
+              },
+              "required": [
+                "after"
+              ]
+            },
+            "then": {
+              "properties": {
+                "after": {
+                  "properties": {
+                    "decided_on": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "decided_on"
+                  ]
+                }
+              }
+            }
+          }
+        ]
+      },
+      "read_role": "owner"
+    },
+    "payroll_lines": {
+      "write_schema": {
+        "type": "object",
+        "properties": {
+          "operation": {
+            "const": "create"
+          },
+          "after": {
+            "type": "object",
+            "properties": {
+              "currency": {
+                "const": "HKD"
+              }
+            },
+            "required": [
+              "currency"
+            ]
+          }
+        },
+        "required": [
+          "operation",
+          "after"
+        ]
+      },
+      "append_only": true,
+      "read_role": "owner"
+    },
+    "postings": {
+      "search_columns": [
+        "entry_ref"
+      ],
+      "write_schema": {
+        "type": "object",
+        "properties": {
+          "operation": {
+            "enum": [
+              "create",
+              "update"
+            ]
+          },
+          "after": {
+            "type": "object",
+            "properties": {
+              "stage": {
+                "enum": [
+                  "prepared",
+                  "posted"
+                ]
+              },
+              "source": {
+                "enum": [
+                  "payroll",
+                  "claim"
+                ]
+              }
+            },
+            "required": [
+              "stage",
+              "source"
+            ]
+          }
+        },
+        "required": [
+          "operation",
+          "after"
+        ],
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "operation": {
+                  "const": "create"
+                }
+              },
+              "required": [
+                "operation"
+              ]
+            },
+            "then": {
+              "properties": {
+                "after": {
+                  "properties": {
+                    "stage": {
+                      "const": "prepared"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "operation": {
+                  "const": "update"
+                }
+              },
+              "required": [
+                "operation"
+              ]
+            },
+            "then": {
+              "properties": {
+                "before": {
+                  "type": "object",
+                  "properties": {
+                    "stage": {
+                      "const": "prepared"
+                    }
+                  },
+                  "required": [
+                    "stage"
+                  ]
+                }
+              },
+              "required": [
+                "before"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "after": {
+                  "properties": {
+                    "stage": {
+                      "const": "prepared"
+                    }
+                  },
+                  "required": [
+                    "stage"
+                  ]
+                }
+              },
+              "required": [
+                "after"
+              ]
+            },
+            "then": {
+              "properties": {
+                "after": {
+                  "properties": {
+                    "posting_ref": {
+                      "type": "null"
+                    },
+                    "posted_on": {
+                      "type": "null"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "after": {
+                  "properties": {
+                    "stage": {
+                      "const": "posted"
+                    }
+                  },
+                  "required": [
+                    "stage"
+                  ]
+                }
+              },
+              "required": [
+                "after"
+              ]
+            },
+            "then": {
+              "properties": {
+                "after": {
+                  "properties": {
+                    "posting_ref": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "posted_on": {
+                      "type": "string",
+                      "minLength": 10
+                    }
+                  },
+                  "required": [
+                    "posting_ref",
+                    "posted_on"
+                  ]
+                }
+              }
+            }
+          }
+        ]
+      },
       "read_role": "owner"
     }
   }

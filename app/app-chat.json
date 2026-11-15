@@ -47,6 +47,15 @@
       ]
     },
     {
+      "id": "payroll",
+      "label": "Payroll",
+      "prompts": [
+        "Explain this month's payroll run",
+        "Why is an employee's MPF zero this month?",
+        "Post an approved payroll run to Accounting"
+      ]
+    },
+    {
       "id": "recruiting",
       "label": "Recruiting",
       "prompts": [

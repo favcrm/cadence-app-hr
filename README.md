@@ -1,7 +1,7 @@
 # Cadence HR app
 
 Public repository: https://github.com/favcrm/cadence-app-hr.
-App identity is `hr`. Release 0.3.0 adds leave balances as a ledger (below). Release 0.2.0 holds seven tables behind five tabs. People is
+App identity is `hr`. Release 0.4.0 adds monthly payroll with MPF and posting to the Accounting app (below); 0.3.0 added leave balances as a ledger. Release 0.2.0 holds seven tables behind five tabs. People is
 the employee directory from 0.1.0. Policies, Leave, Claims and Recruiting are new:
 company policies, leave requests and leave types, expense claims, job openings
 and candidates. Leave and Claims show a pending queue with approve and reject as
@@ -11,8 +11,8 @@ description and write a screening note. The agent stages writes; the owner
 approves them. Every table is readable by the workspace owner only.
 
 The app stores names, employee numbers, contact details, leave and claim records,
-policy text and candidates' CV text. It holds no pay, identity document number,
-bank account or medical information.
+policy text and candidates' CV text, and from 0.4.0 monthly salaries, payroll runs and MPF rate rows. It holds no
+identity document number (HKID), bank account number or medical information.
 
 ## 0.2.1: starter leave types
 
@@ -124,6 +124,96 @@ type. Approving a request deducts leave, an accrual run adds it, and a correctio
 - **Checker pin.** CI checks the bundle with Cadence v0.3.23-beta.1 (the first checker that knows the two operations;
   the released v0.3.22 refuses them). Publishing still needs a released checker through `cadence_version`.
 
+## 0.4.0: monthly payroll with MPF, and posting to Accounting
+
+The agent never computes pay, MPF or a posting amount. Pure, unit-tested code in the screen bundle does
+(`src/domain/mpf.ts`, `payroll.ts`, `posting.ts`); the screen saves the results with their inputs, and the skills
+read, explain and copy them.
+
+- **Storage.** `app/storage/004-payroll.json` adds five owner-only tables; 001 to 003 are untouched and pinned by hash.
+  `rate_tables` (append-only; unique `effective_from`), `salaries` (append-only; unique `employee_id` +
+  `effective_from` + `seq`), `payroll_runs` (unique `run_ref` and `period` + `run_no`), `payroll_lines` (append-only;
+  unique `run_ref` + `employee_id`) and `postings` (unique `source` + `source_id` and `entry_ref`). Schema version 4,
+  `compatible_schema_versions` `[4]`. Write rules: a run is created `draft` with no decision; an update needs the
+  stored run to be a draft; approving or cancelling needs `decided_on`. So an approved or cancelled run cannot
+  change at all, whatever a staged update carries. A posting is created `prepared` with no `posting_ref`; an update
+  needs it still prepared; `posted` needs `posting_ref` and `posted_on`. Salaries and lines must be HKD.
+- **Rates are data.** A rate row holds `employer_rate_bp` and `employee_rate_bp` (basis points), the monthly minimum and
+  maximum relevant income in cents, `holiday_days`, `currency` and a `source_note`. The row in effect for a month is
+  the latest whose `effective_from` is on or before the month's first day. The code holds no rate (a test reads
+  `mpf.ts` for rate literals). The first row is added by the owner on Payroll → MPF rates ("Add the MPF rates"), under
+  the fixed record id `rt-2014-06-01`, with the figures confirmed on ticket HR-4 from the MPFA's Mandatory
+  Contributions – Employees page: 5% each, 7,100 and 30,000 a month, a 30-day employee contribution holiday. They
+  are generic figures, not advice; re-check the MPFA page before each release. A later change is a new row (0.4.0
+  has no form for one).
+- **`mpf.ts`.** `mpf(relevantIncomeMinor, joinDate, period, rateTable, exempt) -> {employerMinor, employeeMinor}`,
+  integers only. The employer contributes from the first day on income up to the maximum level; the employee
+  contributes nothing in the contribution holiday or below the minimum, otherwise on income up to the maximum;
+  `exempt` zeroes both. The holiday is the first `holiday_days` days and the incomplete monthly wage period after
+  them: every month up to and including the one holding join date + 29 days (the MPFA's own example: joining 5 June,
+  no employee contribution for June or July). **Rounding:** the sources name no rule, so each side is rounded to the
+  nearest cent on its own, half a cent up. At a whole-dollar income 5% is a whole number of cents, so the rule only
+  touches incomes with odd cents. The golden table (`tests/unit/mpf.test.ts`) covers below, at and one cent either
+  side of both levels, between (with odd and half cents), above the maximum, the holiday (MPFA's example, month and
+  leap-year edges) and exempt, each to the cent.
+- **Runs.** Payroll → Payroll runs → New payroll run: pick a month, compute (employees, salaries, rate rows and the
+  month's earlier runs are read; nothing is written), type additions (allowances, commission, bonus) or deductions
+  (unpaid leave, a part month) per line, then save. The run and its lines are one `records.batch`: the run's record id
+  is its reference `hr-payroll-<YYYY-MM>-<n>` (`n` one more than any run of that month, whatever its status), each
+  line `<ref>-001` and on. A batch that is refused or whose reply is lost is re-read by its reference: the same run
+  with the same lines counts as saved; anything else stops. Approval (or cancelling a draft) is a separate owner
+  action that re-reads the run at the revision shown and checks its lines are whole. Each line stores its inputs
+  (join date, salary row and amount, additions, deductions, exemption, rate row) and `calc_version`.
+- **Who is in a run.** An employee with a join date on or before the month's end, not left before it (a leave date
+  before the month, or status `left` with none), with an HKD salary in effect (the latest `effective_from` on or before
+  the month's last day; on one date the highest `seq`). The others are listed with the reason.
+- **Posting.** Payroll → Postings lists approved runs (newest month and run number first, compared as numbers) and approved claims. "Prepare posting" computes the Accounting
+  entry (`src/domain/posting.ts`) and stores it as a `postings` row holding the exact `records.batch` arguments for
+  Accounting 0.3.0: one `journal_entries` row (`source` `payroll` or `claim`, `reverses` null, record id the reference)
+  and `journal_lines` rows (`<ref>-001`...), signed HKD minor units, `base_minor` = `amount_minor`, each repeating the
+  reference, date and period, summing to 0. A run posts as totals (debit salaries 6010 and employer MPF 6020; credit
+  the bank 1020 with net pay and MPF payable 2110 with both sides' contributions), dated the month's last day, with no
+  employee's name or pay; a claim posts its expense (6210 travel, 6220 meals, 6120 supplies, 6900 other) against
+  accrued expenses 2020, dated its approval date (else its receipt date), HKD only. These codes are the Accounting
+  starter chart's, generic defaults rather than accounting advice; the owner can change them per posting while it is
+  prepared. The `hr-posting` skill checks `app_describe` for Accounting (absent: "posting is unavailable"), the run or
+  claim is still approved, an exact `eq` read of `journal_entries` (already there: no second batch), an `in` read of
+  the chart (every code present and active), and the standing opening balances (Accounting refuses an entry dated on
+  or before them); then stages the batch unchanged, and only when an `eq` read after approval finds the entry stages
+  the `postings` update (`stage` `posted`, `posting_ref`, `posted_on`). The screen cannot read Accounting: it says
+  "HR has a record that this was posted", never that the journal holds it. Posting a run twice gives one entry:
+  Accounting's unique `entry_ref` refuses a second batch, and the skill's exact lookup stops before it
+  (`tests/unit/payroll_host.test.ts`).
+- **One payroll a month in the books.** An approved run cannot change, so a correction is a later run of the month.
+  Once a later-numbered run of the same month is approved, the earlier approved run is *superseded* (derived from the
+  runs, never stored): Postings shows it as superseded and "Prepare posting" refuses it. Preparing a later run while
+  an earlier run of the month is recorded as posted is refused until the owner confirms on the form that they
+  reversed that entry in Accounting's Journal; the screen cannot read Accounting, so `hr-posting` checks it: it reads
+  every run of the month (an incomplete read stops), refuses a run that a later approved run supersedes, and stops if
+  another approved run's entry is in the journal with no entry that `reverses` it. Before staging, it also checks by
+  string equality that the batch's entry `record_id` and `entry_ref` and every line's `entry_ref` are the posting's
+  `entry_ref`. Tests: `tests/unit/payroll.test.ts` (the rule), `tests/unit/payroll_host.test.ts` (the screen's
+  refusals) and `tests/unit/skills.test.mjs` (the skill's steps).
+- **Without Accounting.** HR never calls another app from the screen. Payroll, Postings and every other tab work;
+  only the posting step is unavailable.
+- **Known limits.** Monthly calendar wage periods only; the minimum and maximum levels are the monthly ones even for a
+  part month (no daily levels); casual and industry schemes, voluntary contributions, tax and bank files are out of
+  scope. A run is saved in one batch within 16,384 bytes (the board's limit before CAD-2263 is deployed), about 30 employees at roughly 520 bytes a line; a
+  larger run is refused with a message. A payroll line holds the employee's name at save time. A draft's number is
+  used once: a cancelled draft keeps it, so the posted run may be `-2`. A staged update to a draft run is not
+  refused by the host; approval checks the run's lines first. A posting's `posting_ref` is not compared with its
+  `entry_ref` by the host (the rule cannot compare fields); the screen flags a mismatch. `payroll_lines` is
+  append-only, which refuses an update but not a new line: a staged create under an approved run's reference with
+  another employee passes the host. The screen checks a run's lines against its `line_count` before approving it or
+  preparing its posting (tested in `payroll_host.test.ts`), so such a run cannot be approved or posted, and
+  `payroll-prep` says a run whose lines do not match its count has no figures to give; the host's table `lock` option (lines locked by
+  `run_ref` once the run is approved) is the proper fix, not adopted in 0.4.0 because checker and board support for it
+  is unverified.
+  One payroll a month is enforced by the screen and the `hr-posting` skill, not by the host or by Accounting: a
+  `records.batch` staged in chat without `hr-posting` can still carry a superseded or second run of the month, and
+  the owner's approval of that card is then the only check. Approve an `hr-payroll-` posting only when it was
+  staged by `hr-posting`.
+
 ## Local development
 
 Use the Node version in `screen-ui.lock.json` and the pnpm version in
@@ -158,16 +248,18 @@ hosted-only storage refusal.
 ## Layout
 
 - `app/` is the installable package: `app.md`, `app-storage.json` with
-  `storage/001-initial.json`, `storage/002-hr-records.json` and `storage/003-leave-ledger.json` pinned by sha256,
-  `app-chat.json`, `skills/<tag>/` (five skill packages) and the generated screen
+  `storage/001-initial.json`, `storage/002-hr-records.json`, `storage/003-leave-ledger.json` and
+  `storage/004-payroll.json` pinned by sha256, `app-chat.json`, `skills/<tag>/` (seven skill packages) and the generated screen
   under `screens/hr/`.
 - `src/bridge/` is the one adapter over the pinned app-kit bridge (`createScreenBridge`): the scope, the
   operations and their budgets, and the leave hint.
 - `src/domain/` is pure logic: `people.ts` (employees), `records.ts` (the four new tabs: field
-  specs, form to profile, exact lookups, decisions, refusal classes) and `leave.ts` (the accrual rule, monthly accrual,
-  ledger entries, batch chunking).
+  specs, form to profile, exact lookups, decisions, refusal classes), `leave.ts` (the accrual rule, monthly accrual,
+  ledger entries, batch chunking), `mpf.ts` (MPF contributions), `mpf-rates.ts` (the first rate row),
+  `payroll.ts` (a month's run) and `posting.ts` (the Accounting batch).
 - `src/features/hr/` holds the screen: People, and one generic record pane (`RecordsPane.tsx`) driven by
-  `views.tsx` for the other tabs; `ledger.ts` holds the ledger's host calls and `BalancesPane.tsx` the Balances list.
+  `views.tsx` for the other tabs; `ledger.ts` holds the ledger's host calls and `BalancesPane.tsx` the Balances list; `payroll.ts` holds payroll's host
+  calls and `PayrollPanes.tsx` the Payroll tab.
 - `tests/unit/`, `tests/contract/` and `tests/eval/` hold the tests; `tests/eval/` is the evaluation set.
 - `scripts/host-schema-check.mjs` and `scripts/host-skills-check.mjs` run the package through the host's own
   schema and skill-reader code (see Verification).
@@ -226,8 +318,9 @@ the descriptor version, so they are not permanent decisions. In 0.2.0:
 - An update is refused unless the stored record is still open. The rule sees the stored row (`before`) and the merged
   row (`after`) but cannot compare a field across them, so "an approved claim's amount cannot change" is enforced by
   freezing the whole decided claim.
-- A claim's status can only be `submitted`, `approved` or `rejected`. Nothing in 0.2.0 (rule, screen or skill) can
-  mark a claim paid; `paid` returns with payroll in 0.4.0, which must change the rule first.
+- A claim's status can only be `submitted`, `approved` or `rejected`. Nothing (rule, screen or skill) can mark a claim
+  paid. 0.4.0 leaves that rule as it is: posting an approved claim to Accounting is recorded on a separate `postings`
+  row, so an approved claim stays frozen.
 
 The host reports a refused write as status 400, which the board shows as `failed`: the screen says the record
 "may already be decided" and offers a reload instead of claiming a cause.

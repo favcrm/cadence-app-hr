@@ -25,7 +25,8 @@ const columns = tableOps.flatMap((o) => o.columns);
 // The employees table is created by migration 1; its columns are looked up by name.
 const employeeColumns = migrations[0].body.operations.find((o) => o.op === "create_table" && o.table === "employees").columns;
 const byName = Object.fromEntries(employeeColumns.map((c) => [c.name, c]));
-const REQUIRED_NO_DEFAULT = ["display_name", "employee_no", "employee_id", "employee_name", "leave_type", "start_date", "end_date", "half_days", "claim_date", "amount_minor", "currency", "title", "body", "effective_from", "code", "name", "paid", "opening_id", "kind", "effective_date", "source_ref"];
+const REQUIRED_NO_DEFAULT = ["display_name", "employee_no", "employee_id", "employee_name", "leave_type", "start_date", "end_date", "half_days", "claim_date", "amount_minor", "currency", "title", "body", "effective_from", "code", "name", "paid", "opening_id", "kind", "effective_date", "source_ref",
+  "employer_rate_bp", "employee_rate_bp", "min_relevant_income_minor", "max_relevant_income_minor", "holiday_days", "source_note", "seq", "monthly_minor", "mpf_exempt", "run_ref", "run_no", "entry_date", "line_count", "calc_version", "join_date", "salary_id", "additions_minor", "deductions_minor", "rate_effective_from", "relevant_income_minor", "employer_mpf_minor", "employee_mpf_minor", "net_pay_minor", "source", "source_id", "entry_ref", "batch", "period", "employee_name"];
 
 test("every migration file's sha256 equals its pin and migrations are contiguous from 1", () => {
   expect(descriptor.migrations.length).toBe(descriptor.schema_version);
@@ -49,11 +50,44 @@ test("migration 002 is byte-identical to the 0.2.x release, and 001 and 002 are 
   expect(createHash("sha256").update(bytes("app/storage/002-hr-records.json")).digest("hex")).toBe("3e9227727792d7ae3bda0d7b523fbd0ca95eebac15f93053a711e5496451318b");
   expect(descriptor.migrations[0].sha256).toBe("sha256:e90022e7a06babd0b69ffec315fa7637ae17d2cbf881c10d72a0b216b69da7f1");
   expect(descriptor.migrations[1].sha256).toBe("sha256:3e9227727792d7ae3bda0d7b523fbd0ca95eebac15f93053a711e5496451318b");
-  // 0.3.0 adds one migration and no operation on an older table.
-  expect(descriptor.schema_version).toBe(3);
-  expect(descriptor.compatible_schema_versions).toEqual([3]);
+  // 0.3.0 added one migration and no operation on an older table.
   expect(descriptor.migrations[2]).toMatchObject({ version: 3, path: "storage/003-leave-ledger.json" });
   for (const op of migrations[2].body.operations) expect(op.table).toBe("leave_entries");
+});
+
+test("migration 003 is byte-identical to the 0.3.0 release; 0.4.0 adds 004 and touches no older table", () => {
+  expect(createHash("sha256").update(bytes("app/storage/003-leave-ledger.json")).digest("hex")).toBe("11d19be5a74eb3dfad4c0d76eca5c751c40897329b9fe6f6187ec81523a40dea");
+  expect(descriptor.migrations[2].sha256).toBe("sha256:11d19be5a74eb3dfad4c0d76eca5c751c40897329b9fe6f6187ec81523a40dea");
+  expect(descriptor.schema_version).toBe(4);
+  expect(descriptor.compatible_schema_versions).toEqual([4]);
+  expect(descriptor.migrations[3]).toMatchObject({ version: 4, path: "storage/004-payroll.json" });
+  const created = migrations[3].body.operations.filter((o) => o.op === "create_table").map((o) => o.table);
+  expect(created).toEqual(["rate_tables", "salaries", "payroll_runs", "payroll_lines", "postings"]);
+  for (const op of migrations[3].body.operations) expect(created).toContain(op.table);
+});
+
+test("004: append-only rates, salaries and lines; unique keys that make saving and posting retry-safe; owner-only", () => {
+  const ops = migrations[3].body.operations;
+  const unique = (table) => ops.filter((o) => o.op === "create_index" && o.table === table && o.unique).map((o) => o.columns);
+  expect(unique("rate_tables")).toEqual([["effective_from"]]);
+  expect(unique("salaries")).toEqual([["employee_id", "effective_from", "seq"]]);
+  expect(unique("payroll_runs")).toEqual([["run_ref"], ["period", "run_no"]]);
+  expect(unique("payroll_lines")).toEqual([["run_ref", "employee_id"]]);
+  expect(unique("postings")).toEqual([["source", "source_id"], ["entry_ref"]]);
+  for (const table of ["rate_tables", "salaries", "payroll_lines"]) expect(descriptor.tables[table]).toMatchObject({ append_only: true, read_role: "owner" });
+  for (const table of ["payroll_runs", "postings"]) {
+    expect(descriptor.tables[table].append_only).toBeUndefined();
+    expect(descriptor.tables[table].write_schema).toBeDefined();
+    expect(descriptor.tables[table].read_role).toBe("owner");
+  }
+  // Each payroll line stores its inputs and the version of the calculation that made it.
+  const line = ops.find((o) => o.op === "create_table" && o.table === "payroll_lines").columns.map((c) => c.name);
+  for (const name of ["join_date", "salary_id", "monthly_minor", "additions_minor", "deductions_minor", "mpf_exempt", "rate_effective_from", "relevant_income_minor", "employer_mpf_minor", "employee_mpf_minor", "net_pay_minor", "calc_version"]) expect(line).toContain(name);
+  // Accounting's entry_ref is at most 160 characters; HR's references must fit in it.
+  const col = (table, name) => ops.find((o) => o.op === "create_table" && o.table === table).columns.find((c) => c.name === name);
+  expect(col("postings", "entry_ref").max_length).toBe(160);
+  expect(col("postings", "posting_ref").nullable).toBe(true);
+  expect(col("payroll_runs", "run_ref").max_length).toBeLessThanOrEqual(160);
 });
 
 test("003 creates the append-only ledger: its columns, a unique source_ref, owner-only reads, and no backfill anywhere", () => {
@@ -156,7 +190,9 @@ test("the employees table has the planned columns, a unique employee number, and
   ]);
   const unique = migrations[0].body.operations.filter((o) => o.op === "create_index" && o.unique);
   expect(unique.map((o) => o.columns)).toEqual([["employee_no"]]);
-  for (const c of columns) expect(c.name).not.toMatch(/salary|pay|hkid|identity|passport|bank|account|medical|health|mpf|(^|_)age(_|$)|gender|birth|marital|family/);
+  // No identity document, bank account, medical or protected-attribute column anywhere; pay and MPF columns arrive in 004 only.
+  for (const c of columns) expect(c.name).not.toMatch(/hkid|identity|passport|bank|account|medical|health|(^|_)age(_|$)|gender|birth|marital|family/);
+  for (const m of migrations.slice(0, 3)) for (const o of m.body.operations.filter((op) => op.op === "create_table")) for (const c of o.columns) expect(c.name).not.toMatch(/salary|pay|mpf/);
   // Dates are text holding YYYY-MM-DD; the contract has no date type.
   for (const name of ["join_date", "leave_date"]) {
     expect(byName[name].type).toBe("text");
@@ -193,6 +229,15 @@ test("the manifest names app hr at the package version and requires the four con
   expect(manifest.listing.data.personal).toBe(true);
   expect(manifest.listing.can.join(" ")).toContain("welcome note");
   expect(manifest.listing.tagline.length).toBeLessThanOrEqual(80);
+  // The host's listing limits: a longer listing is refused at check time.
+  expect(manifest.listing.about.length).toBeLessThanOrEqual(600);
+  expect(manifest.listing.tags.length).toBeLessThanOrEqual(5);
+  expect(manifest.listing.can.length).toBeLessThanOrEqual(5);
+  for (const line of manifest.listing.can) expect(line.length).toBeLessThanOrEqual(100);
+  expect(manifest.listing.data.stores.length).toBeLessThanOrEqual(5);
+  for (const line of manifest.listing.data.stores) { expect(line.length).toBeLessThanOrEqual(120); expect(line).not.toContain(": "); }
+  expect(manifest.summary.length).toBeLessThanOrEqual(160);
+  for (const context of json("app/app-chat.json").contexts) expect(context.prompts.length).toBeLessThanOrEqual(3);
   expect(["marketing", "customers", "operations", "finance", "content", "other"]).toContain(manifest.listing.category);
   expect(descriptor.app).toBe(manifest.app);
   expect(json("app/app-chat.json").app).toBe("hr");

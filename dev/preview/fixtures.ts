@@ -61,6 +61,8 @@ export function seedTables(): Record<string, SeedRow[]> {
       row("cl-001", { ...who(3), claim_date: "2026-03-02", category: "meals", merchant: "Sample Cafe", amount_minor: 1250, currency: "HKD", description: "Team lunch", receipt_ref: null, status: "submitted", decided_on: null, decision_note: null }),
       row("cl-002", { ...who(4), claim_date: "2026-02-20", category: "travel", merchant: "Sample Transit", amount_minor: 4800, currency: "HKD", description: "", receipt_ref: "receipt-1.pdf", status: "approved", decided_on: "2026-02-22", decision_note: null }),
     ],
+    // Synthetic monthly salaries (invented amounts) for the Payroll tab; the MPF rates are added from the screen.
+    salaries: emp.slice(0, 6).map((e, i) => row(`sal-seed00${i + 1}`, { employee_id: e.id, effective_from: "2026-01-01", seq: 1, monthly_minor: [2500000, 1800000, 3600000, 680000, 2200000, 4100000][i]!, currency: "HKD", mpf_exempt: i === 5, note: null })),
     job_openings: [row("job-001", { title: "Sample Bookkeeper", department: "Finance", description: "Keep the books. Invented requirements for preview.", status: "open" }), row("job-002", { title: "Sample Designer", department: "Marketing", description: "", status: "draft" })],
     candidates: [
       row("cand-001", { opening_id: "job-001", display_name: "Robin Sample", email: "robin@example.invalid", phone: null, source: "Referral", stage: "new", cv_text: "Sample CV text, invented.", screening: { summary: "Evidences 1 of 2 requirements.", reasons: ["Requirement: bookkeeping. CV: 'bookkeeping experience' (evidenced).", "Requirement: payroll. Not mentioned (ask at interview)."] } }),

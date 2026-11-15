@@ -19,7 +19,7 @@ const SEARCH: Record<string, string[]> = {
   claims: ["employee_name", "merchant", "description"], job_openings: ["title"], candidates: ["display_name", "email", "cv_text"], leave_entries: ["source_ref", "note"],
 };
 const OPEN: Record<string, string> = { leave_requests: "pending", claims: "submitted" };
-const SECTIONS = ["people", "policies", "leave", "claims", "recruiting"];
+const SECTIONS = ["people", "policies", "leave", "claims", "payroll", "recruiting"];
 const ACTIONS = ["records.list", "records.show", "records.create", "records.update", "records.batch", "records.aggregate", "screen.route.patch"];
 const INSTALL = "install-preview";
 const DIGEST = `sha256:${"c".repeat(64)}`;
@@ -152,12 +152,12 @@ function call(verb: string, args: Record<string, unknown>): unknown {
       const seenIds = new Set<string>();
       for (const item of batch) {
         const name = typeof item.table === "string" ? item.table : "employees";
-        if (name !== "leave_entries" || typeof item.record_id !== "string" || !item.profile) throw failed();
-        ledgerRule(item.profile);
+        if (!["leave_entries", "payroll_runs", "payroll_lines"].includes(name) || typeof item.record_id !== "string" || !item.profile) throw failed();
+        if (name === "leave_entries") ledgerRule(item.profile);
         const all = [...rowsOf(name), ...(staged[name] ??= [])];
         if (seenIds.has(item.record_id) || all.some((r) => r.id === item.record_id)) throw new Refused(refusal("conflict", "That changed. Refresh before trying again."));
         // One duplicate key refuses the whole batch: 409 unique_violation, which the board shows as `conflict`.
-        if (duplicateRef(all, item.profile)) throw new Refused(refusal("conflict", "That changed. Refresh before trying again."));
+        if (name === "leave_entries" && duplicateRef(all, item.profile)) throw new Refused(refusal("conflict", "That changed. Refresh before trying again."));
         seenIds.add(item.record_id);
         staged[name]!.push({ id: item.record_id, revision: 1, profile: item.profile });
       }

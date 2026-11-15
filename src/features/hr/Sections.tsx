@@ -4,6 +4,7 @@ import BalancesPane, { type LedgerCaps } from "./BalancesPane";
 import { parseRecordList, type HostScope } from "./hostActions";
 import { useLocale } from "./locale";
 import { listArgs } from "./recordQueries";
+import { PostingsPane, RatesPane, RunsPane, SalariesPane } from "./PayrollPanes";
 import RecordsPane from "./RecordsPane";
 import { useHrQuery } from "./resources";
 import { candidatesView, claimsView, leaveRequestsView, leaveTypesView, openingsView, policiesView } from "./views";
@@ -63,6 +64,20 @@ export function RecruitingTab(p: PaneProps) {
           <RecordsPane key={`candidates:${opening}`} {...p} view={view} />
         </>
       )}
+    </div>
+  );
+}
+
+/** Payroll: runs computed in the screen, the salaries and MPF rate rows they read, and postings to Accounting. */
+export function PayrollTab(p: PaneProps) {
+  const [list, setList] = useState(0);
+  return (
+    <div className="hr-list">
+      <SubTabs labels={["Payroll runs", "Salaries", "MPF rates", "Postings"]} current={list} onChange={setList} onClose={p.onClose} />
+      {list === 0 ? <RunsPane scope={p.scope} canWrite={p.canWrite} canBatch={p.caps.batch} />
+        : list === 1 ? <SalariesPane scope={p.scope} canWrite={p.canWrite} />
+        : list === 2 ? <RatesPane scope={p.scope} canWrite={p.canWrite} />
+        : <PostingsPane scope={p.scope} canWrite={p.canWrite} />}
     </div>
   );
 }

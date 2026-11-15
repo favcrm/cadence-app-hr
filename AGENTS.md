@@ -13,8 +13,9 @@ never add a private `postMessage` receiver, a copy of the host frame or host
 CSS. The host contract is its app storage descriptor and limits, the
 `records.*` verbs and the screen services.
 
-Release scope is in the ticket. 0.2.0 has seven tables, all owner-only. Do not add salary,
-identity document, bank account or medical columns. Dates are `text` holding
+Release scope is in the ticket. Every table is owner-only. From 0.4.0 the app stores salaries
+and payroll; never add identity document (HKID), bank account number or medical columns. The agent
+never computes pay, MPF or posting amounts: tested code in the screen does. Dates are `text` holding
 `YYYY-MM-DD`; money, when it arrives, is an integer in minor units with a
 currency column.
 

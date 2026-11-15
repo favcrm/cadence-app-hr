@@ -9,12 +9,12 @@ import "./hr-layout.css";
 import "./hr-drawer.css";
 import { HrLocaleProvider, useLocale } from "./locale";
 import PeopleList from "./PeopleList";
-import { ClaimsTab, LeaveTab, PoliciesTab, RecruitingTab } from "./Sections";
+import { ClaimsTab, LeaveTab, PayrollTab, PoliciesTab, RecruitingTab } from "./Sections";
 
 // Waiting longer than this for the first verified host push means the host is
 // unreachable; the screen says so instead of spinning forever.
 const HOST_PUSH_TIMEOUT_MS = 15000;
-const TAB_LABEL: Record<Section, string> = { people: "People", policies: "Policies", leave: "Leave", claims: "Claims", recruiting: "Recruiting" };
+const TAB_LABEL: Record<Section, string> = { people: "People", policies: "Policies", leave: "Leave", claims: "Claims", payroll: "Payroll", recruiting: "Recruiting" };
 
 export default function HrScreen() {
   const snapshot = useScope();
@@ -71,6 +71,7 @@ function Body() {
           : section === "policies" ? <PoliciesTab {...pane} />
           : section === "leave" ? <LeaveTab {...pane} />
           : section === "claims" ? <ClaimsTab {...pane} />
+          : section === "payroll" ? <PayrollTab {...pane} />
           : section === "recruiting" ? <RecruitingTab {...pane} />
           : route.view === "new"
             ? <EmployeeNew scope={scope} canWrite={canWrite} onCancel={() => go({ view: "list", record_id: null })} onCreated={created} />

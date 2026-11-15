@@ -16,18 +16,18 @@
     {
       "name": "client.js",
       "media_type": "text/javascript",
-      "size": 172967,
-      "sha256": "sha256:3009ab2709c040d335a8598a27a0414409c908b9677c71972b93fb5dccb6ac2d"
+      "size": 235680,
+      "sha256": "sha256:2ebd24979acebf2015a8b31061ababeccfa585a6191aaf538dbe212d7384d5d2"
     },
     {
       "name": "hr.css",
       "media_type": "text/css",
-      "size": 27363,
-      "sha256": "sha256:b881d1559d999debd97231fa3e99a676f7ac257be03afa2f06f202207173e236"
+      "size": 27485,
+      "sha256": "sha256:86f81e28342effd05f98396bc6fc2bcb16a48528cffb283cd79f49e95a0b0637"
     }
   ],
   "provenance": {
-    "source_digest": "sha256:5dccc8610b2db64f59d1487c4076ae7c85d9f1713cfc96c88a77b4719081e93b",
+    "source_digest": "sha256:917680ba272b5b0c6556c162db5edeb09aafb1aa83bc7b616148407d304b9cb2",
     "sdk_digest": "sha256:fd65c974511e63b3996e9fa7e438fb4e39df5f508d11636116ef150fcc123e35",
     "toolchain_digest": "sha256:e21cfc8222db408abe6ba5a482520639d9cf4b96481c19aff4b4246af8a65e42"
   },
@@ -65,6 +65,10 @@
       {
         "id": "claims",
         "label": "Claims"
+      },
+      {
+        "id": "payroll",
+        "label": "Payroll"
       },
       {
         "id": "recruiting",
