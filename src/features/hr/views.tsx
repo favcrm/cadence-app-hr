@@ -85,3 +85,14 @@ export function candidatesView(openingId: string | null, titles: Record<string, 
     extra: (p, t) => [{ key: "stage", term: t("Stage"), value: chip(p.stage, t) }, { key: "opening", term: t("Opening"), value: typeof p.opening_id === "string" ? titles[p.opening_id] ?? "—" : "—" }],
   };
 }
+
+// Staff self-service (0.5.0): what staff filed from their own view. The owner decides them here; nobody edits them.
+const STAFF_NOTE = (t: (x: string) => string) => ({ key: "filed", term: t("Filed by"), value: t("The employee, from their own view of HR") });
+export const staffLeaveRequestsView: View = {
+  ...leaveRequestsView, id: "staff-leave", title: "Staff requests", spec: { ...LEAVE_REQUEST, table: "staff_leave_requests" }, searchHint: "Search staff requests…", newId: "slv", staff: true,
+  extra: (p, t) => [...leaveRequestsView.extra!(p, t), STAFF_NOTE(t)],
+};
+export const staffClaimsView: View = {
+  ...claimsView, id: "staff-claims", title: "Staff claims", spec: { ...CLAIM, table: "staff_claims" }, searchHint: "Search staff claims…", newId: "scl", staff: true,
+  extra: (p, t) => [...claimsView.extra!(p, t), STAFF_NOTE(t)],
+};

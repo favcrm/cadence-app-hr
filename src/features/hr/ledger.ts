@@ -91,6 +91,8 @@ export async function ensureEntry(scope: HostScope, entry: LedgerEntry, actions:
 
 // ---- approving and rejecting a leave request ----------------------------------------------------------
 const REQUEST = "leave_requests";
+/** Requests staff file from their own view (0.5.0). Their ids are host-named, so `taken-<id>` never meets an owner request's. */
+export const STAFF_REQUEST = "staff_leave_requests";
 const NOT_PENDING_TEXT = "This request is no longer pending. Reload it to see what happened.";
 const CHANGED_TEXT = "This request changed after you opened it. Reload it, then decide again.";
 const REVERSED_TEXT = "An earlier rejection of this request already reversed its leave entry. Reject it to finish; it cannot be approved now.";
@@ -98,8 +100,8 @@ const EDIT_AFTER_APPROVAL_TEXT = "An approval of this request did not finish: it
 const EDIT_AFTER_REJECTION_TEXT = "A rejection of this request did not finish: its leave entry is already reversed, so it cannot be edited. Finish the rejection first (reject it again).";
 
 /** A fresh read of the request: it must still be pending and at the revision the owner decided on. */
-async function freshPending(scope: HostScope, record: HostRecord, actions: HostActions): Promise<HostRecord> {
-  const fresh = await actions.show(scope, record.id, REQUEST);
+async function freshPending(scope: HostScope, record: HostRecord, actions: HostActions, table: string): Promise<HostRecord> {
+  const fresh = await actions.show(scope, record.id, table);
   if (text(fresh, "status") !== "pending") throw new FormError(null, NOT_PENDING_TEXT);
   if (fresh.revision !== record.revision) throw new FormError(null, CHANGED_TEXT);
   return fresh;
@@ -111,16 +113,16 @@ async function freshPending(scope: HostScope, record: HostRecord, actions: HostA
  * next try recognises it and goes on to the status, so one approval is one entry. If a rejection that did not finish
  * already reversed the entry, approving would leave an approved request with nothing deducted, so it is refused.
  */
-export async function approveLeave(scope: HostScope, record: HostRecord, today: string, note: string, actions: HostActions = hostActions): Promise<HostRecord> {
+export async function approveLeave(scope: HostScope, record: HostRecord, today: string, note: string, actions: HostActions = hostActions, table: string = REQUEST): Promise<HostRecord> {
   const patch = decisionPatch("approved", today, note);
-  const fresh = await freshPending(scope, record, actions);
+  const fresh = await freshPending(scope, record, actions, table);
   const built = takenEntry(fresh);
   if (!built.ok) throw new FormError(null, built.reason);
   // The entry can only already exist after an earlier try; only then can a reversal of it exist too.
   if ((await ensureEntry(scope, built.entry, actions)) === "exists" && (await findEntry(scope, reversalRef(fresh.id), actions)) !== null) {
     throw new FormError(null, REVERSED_TEXT);
   }
-  return actions.update(scope, fresh.id, fresh.revision, patch, REQUEST);
+  return actions.update(scope, fresh.id, fresh.revision, patch, table);
 }
 /**
  * Reject: re-read the request (still pending, at the revision the owner saw). If an earlier approval stopped after its
@@ -128,16 +130,16 @@ export async function approveLeave(scope: HostScope, record: HostRecord, today: 
  * `adjustment` (the stored entry's half-days back, `reversal-taken-<id>`), retry-safe like any entry, and only then
  * set the request rejected. With no `taken` entry nothing is written to the ledger.
  */
-export async function rejectLeave(scope: HostScope, record: HostRecord, today: string, note: string, actions: HostActions = hostActions): Promise<HostRecord> {
-  const patch = decisionPatch("rejected", today, note);
-  const fresh = await freshPending(scope, record, actions);
+export async function rejectLeave(scope: HostScope, record: HostRecord, today: string, note: string, actions: HostActions = hostActions, table: string = REQUEST, status: "rejected" | "cancelled" = "rejected"): Promise<HostRecord> {
+  const patch = { ...decisionPatch("rejected", today, note), status };
+  const fresh = await freshPending(scope, record, actions, table);
   const taken = await findEntry(scope, takenRef(fresh.id), actions);
   if (taken !== null) {
     const built = reversalEntry(fresh.id, taken.profile);
     if (!built.ok) throw new FormError(null, built.reason);
     await ensureEntry(scope, built.entry, actions);
   }
-  return actions.update(scope, fresh.id, fresh.revision, patch, REQUEST);
+  return actions.update(scope, fresh.id, fresh.revision, patch, table);
 }
 /**
  * Before a pending request is edited: refuse while a decision that did not finish has written to the ledger. A `taken`
@@ -237,10 +239,12 @@ export const runAccrual = (scope: HostScope, plan: AccrualPlan, onProgress?: (do
 export interface ReconcilePlan { entries: LedgerEntry[]; alreadyThere: number; unusable: { id: string; reason: string }[] }
 /** Every approved request, whenever it was approved and by whatever path, that has no `taken` entry yet. */
 export async function planReconcile(scope: HostScope, actions: HostActions = hostActions): Promise<ReconcilePlan> {
-  const [approved, taken] = await Promise.all([
+  const [owners, staff, taken] = await Promise.all([
     listAll(scope, REQUEST, [{ field: "status", op: "eq", value: "approved" }], actions),
+    listAll(scope, STAFF_REQUEST, [{ field: "status", op: "eq", value: "approved" }], actions),
     listAll(scope, LEDGER, [{ field: "kind", op: "eq", value: "taken" }], actions),
   ]);
+  const approved = [...owners, ...staff];
   const refs = new Set(taken.flatMap((r) => { const ref = text(r, "source_ref"); return ref === null ? [] : [ref]; }));
   const plan: ReconcilePlan = { entries: [], alreadyThere: 0, unusable: [] };
   for (const request of approved) {

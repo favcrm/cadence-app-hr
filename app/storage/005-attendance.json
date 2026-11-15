@@ -1,0 +1,25 @@
+{
+  "version": 5,
+  "operations": [
+    {
+      "op": "create_table",
+      "table": "attendance_punches",
+      "columns": [
+        {"name": "employee_id", "type": "text", "nullable": false, "max_length": 128, "json_schema": {"type": "string", "pattern": "^[A-Za-z0-9_-]{1,128}$"}},
+        {"name": "member_id", "type": "text", "nullable": false, "max_length": 200},
+        {"name": "at", "type": "integer", "nullable": false, "json_schema": {"type": "integer", "minimum": 946684800, "maximum": 4102444800}},
+        {"name": "direction", "type": "text", "nullable": false, "max_length": 3, "json_schema": {"type": "string", "pattern": "^[a-z]{2,3}$"}},
+        {"name": "method", "type": "text", "nullable": false, "max_length": 16, "json_schema": {"type": "string", "pattern": "^[a-z_]{1,16}$"}},
+        {"name": "lat_e7", "type": "integer", "nullable": true, "json_schema": {"type": "integer", "minimum": -900000000, "maximum": 900000000}},
+        {"name": "lng_e7", "type": "integer", "nullable": true, "json_schema": {"type": "integer", "minimum": -1800000000, "maximum": 1800000000}},
+        {"name": "accuracy_m", "type": "integer", "nullable": true, "json_schema": {"type": "integer", "minimum": 0, "maximum": 100000}},
+        {"name": "note", "type": "text", "nullable": true, "max_length": 500},
+        {"name": "client_ref", "type": "text", "nullable": false, "max_length": 64, "json_schema": {"type": "string", "pattern": "^[A-Za-z0-9_-]{1,64}$"}}
+      ]
+    },
+    {"op": "create_index", "table": "attendance_punches", "name": "attendance_punches_client_ref", "columns": ["member_id", "client_ref"], "unique": true},
+    {"op": "create_index", "table": "attendance_punches", "name": "attendance_punches_member", "columns": ["member_id"], "unique": false},
+    {"op": "create_index", "table": "attendance_punches", "name": "attendance_punches_employee", "columns": ["employee_id"], "unique": false},
+    {"op": "create_index", "table": "attendance_punches", "name": "attendance_punches_at", "columns": ["at"], "unique": false}
+  ]
+}

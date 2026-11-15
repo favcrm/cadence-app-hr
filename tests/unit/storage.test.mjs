@@ -26,7 +26,8 @@ const columns = tableOps.flatMap((o) => o.columns);
 const employeeColumns = migrations[0].body.operations.find((o) => o.op === "create_table" && o.table === "employees").columns;
 const byName = Object.fromEntries(employeeColumns.map((c) => [c.name, c]));
 const REQUIRED_NO_DEFAULT = ["display_name", "employee_no", "employee_id", "employee_name", "leave_type", "start_date", "end_date", "half_days", "claim_date", "amount_minor", "currency", "title", "body", "effective_from", "code", "name", "paid", "opening_id", "kind", "effective_date", "source_ref",
-  "employer_rate_bp", "employee_rate_bp", "min_relevant_income_minor", "max_relevant_income_minor", "holiday_days", "source_note", "seq", "monthly_minor", "mpf_exempt", "run_ref", "run_no", "entry_date", "line_count", "calc_version", "join_date", "salary_id", "additions_minor", "deductions_minor", "rate_effective_from", "relevant_income_minor", "employer_mpf_minor", "employee_mpf_minor", "net_pay_minor", "source", "source_id", "entry_ref", "batch", "period", "employee_name"];
+  "employer_rate_bp", "employee_rate_bp", "min_relevant_income_minor", "max_relevant_income_minor", "holiday_days", "source_note", "seq", "monthly_minor", "mpf_exempt", "run_ref", "run_no", "entry_date", "line_count", "calc_version", "join_date", "salary_id", "additions_minor", "deductions_minor", "rate_effective_from", "relevant_income_minor", "employer_mpf_minor", "employee_mpf_minor", "net_pay_minor", "source", "source_id", "entry_ref", "batch", "period", "employee_name",
+  "member_id", "at", "direction", "method", "client_ref", "requested_at", "as_of", "request_id", "withdrawn_at"];
 
 test("every migration file's sha256 equals its pin and migrations are contiguous from 1", () => {
   expect(descriptor.migrations.length).toBe(descriptor.schema_version);
@@ -55,12 +56,10 @@ test("migration 002 is byte-identical to the 0.2.x release, and 001 and 002 are 
   for (const op of migrations[2].body.operations) expect(op.table).toBe("leave_entries");
 });
 
-test("migration 003 is byte-identical to the 0.3.0 release; 0.4.0 adds 004 and touches no older table", () => {
+test("migration 003 is byte-identical to the 0.3.0 release; 0.4.0 added 004, byte-identical since, and touched no older table", () => {
   expect(createHash("sha256").update(bytes("app/storage/003-leave-ledger.json")).digest("hex")).toBe("11d19be5a74eb3dfad4c0d76eca5c751c40897329b9fe6f6187ec81523a40dea");
   expect(descriptor.migrations[2].sha256).toBe("sha256:11d19be5a74eb3dfad4c0d76eca5c751c40897329b9fe6f6187ec81523a40dea");
-  expect(descriptor.schema_version).toBe(4);
-  expect(descriptor.compatible_schema_versions).toEqual([4]);
-  expect(descriptor.migrations[3]).toMatchObject({ version: 4, path: "storage/004-payroll.json" });
+  expect(descriptor.migrations[3]).toMatchObject({ version: 4, path: "storage/004-payroll.json", sha256: "sha256:c556a4f2cd1a94fc308fa94c732b57875cac58def8cb33b7ca4a22fdf823610c" });
   const created = migrations[3].body.operations.filter((o) => o.op === "create_table").map((o) => o.table);
   expect(created).toEqual(["rate_tables", "salaries", "payroll_runs", "payroll_lines", "postings"]);
   for (const op of migrations[3].body.operations) expect(created).toContain(op.table);
@@ -242,4 +241,47 @@ test("the manifest names app hr at the package version and requires the four con
   expect(descriptor.app).toBe(manifest.app);
   expect(json("app/app-chat.json").app).toBe("hr");
   expect(json("app/app-chat.json").contexts[0].prompts.length).toBe(3);
+});
+
+test("0.5.0 adds 005 (punches) and 006 (staff self-service), touches no older table, and 001-004 are the released bytes", () => {
+  expect(descriptor.schema_version).toBe(6);
+  expect(descriptor.compatible_schema_versions).toEqual([6]);
+  expect(createHash("sha256").update(bytes("app/storage/004-payroll.json")).digest("hex")).toBe("c556a4f2cd1a94fc308fa94c732b57875cac58def8cb33b7ca4a22fdf823610c");
+  expect(descriptor.migrations.slice(4).map((m) => [m.version, m.path])).toEqual([[5, "storage/005-attendance.json"], [6, "storage/006-self-service.json"]]);
+  const created = (i) => migrations[i].body.operations.filter((o) => o.op === "create_table").map((o) => o.table);
+  expect(created(4)).toEqual(["attendance_punches"]);
+  expect(created(5)).toEqual(["staff_link_requests", "staff_snapshots", "staff_leave_requests", "staff_claims", "leave_withdrawals"]);
+  for (const i of [4, 5]) for (const op of migrations[i].body.operations) expect(created(i)).toContain(op.table);
+  // The punch columns the ticket names; location stays nullable until the host can read it (CAD-2334).
+  const punch = migrations[4].body.operations[0].columns;
+  expect(punch.map((c) => c.name)).toEqual(["employee_id", "member_id", "at", "direction", "method", "lat_e7", "lng_e7", "accuracy_m", "note", "client_ref"]);
+  for (const name of ["lat_e7", "lng_e7", "accuracy_m", "note"]) expect(punch.find((c) => c.name === name).nullable).toBe(true);
+  expect(punch.find((c) => c.name === "at").type).toBe("integer");
+});
+
+test("0.5.0: every new table is member-owned the way the host requires, and no older table gained row_owner", () => {
+  const NEW = ["attendance_punches", "staff_link_requests", "staff_snapshots", "staff_leave_requests", "staff_claims", "leave_withdrawals"];
+  for (const [name, o] of Object.entries(descriptor.tables)) expect([name, o.row_owner === undefined]).toEqual([name, !NEW.includes(name)]);
+  const ops = migrations.slice(4).flatMap((m) => m.body.operations);
+  for (const name of NEW) {
+    expect(descriptor.tables[name]).toMatchObject({ row_owner: "member_id", read_role: "owner" });
+    const owner = ops.find((o) => o.op === "create_table" && o.table === name).columns.find((c) => c.name === "member_id");
+    // AOS-564: a text column, not nullable, no default, enum or format, and room for any member id.
+    expect(owner).toEqual({ name: "member_id", type: "text", nullable: false, max_length: 200 });
+    const indexes = ops.filter((o) => o.op === "create_index" && o.table === name);
+    for (const unique of indexes.filter((i) => i.unique)) expect(unique.columns).toContain("member_id");
+    expect(indexes.some((i) => !i.unique && i.columns.length === 1 && i.columns[0] === "member_id")).toBe(true);
+    expect(descriptor.tables[name].balanced).toBeUndefined();
+    expect(descriptor.tables[name].lock).toBeUndefined();
+  }
+  for (const name of ["attendance_punches", "staff_link_requests", "staff_snapshots", "leave_withdrawals"]) expect(descriptor.tables[name].append_only).toBe(true);
+  // A member's request or claim keeps the owner tables' rule: filed open, and frozen once decided.
+  expect(descriptor.tables.staff_leave_requests.write_schema).toEqual(descriptor.tables.leave_requests.write_schema);
+  expect(descriptor.tables.staff_claims.write_schema).toEqual(descriptor.tables.claims.write_schema);
+  // The staff tables copy the owner tables' columns, plus the owner column and the retry key.
+  const cols = (table) => [...migrations.flatMap((m) => m.body.operations)].find((o) => o.op === "create_table" && o.table === table).columns.map((c) => c.name);
+  expect(cols("staff_leave_requests").filter((c) => !["member_id", "client_ref"].includes(c))).toEqual(cols("leave_requests"));
+  expect(cols("staff_claims").filter((c) => !["member_id", "client_ref"].includes(c))).toEqual(cols("claims"));
+  // No pay, identity, bank or medical column on any table a member can read.
+  for (const name of NEW) for (const c of cols(name)) expect(c).not.toMatch(/salary|pay|mpf|hkid|identity|passport|bank|account|medical|health/);
 });

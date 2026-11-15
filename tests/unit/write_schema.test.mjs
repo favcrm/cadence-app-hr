@@ -18,10 +18,10 @@ test("every case gets the expected verdict from the declared write schema", () =
   for (const c of cases) expect([c.name, run(descriptor.tables[c.table].write_schema, c)]).toEqual([c.name, c.ok]);
 });
 
-test("the tables that declare a write schema are the decision tables, the ledgers, leave types and payroll; every table is owner-only", () => {
-  expect(Object.entries(descriptor.tables).filter(([, o]) => o.write_schema).map(([n]) => n).sort()).toEqual(["claims", "leave_entries", "leave_requests", "leave_types", "payroll_lines", "payroll_runs", "postings", "salaries"]);
+test("the tables that declare a write schema are the decision tables, the ledgers, leave types, payroll and punches; every table is owner-only", () => {
+  expect(Object.entries(descriptor.tables).filter(([, o]) => o.write_schema).map(([n]) => n).sort()).toEqual(["attendance_punches", "claims", "leave_entries", "leave_requests", "leave_types", "payroll_lines", "payroll_runs", "postings", "salaries", "staff_claims", "staff_leave_requests"]);
   for (const o of Object.values(descriptor.tables)) expect(o.read_role).toBe("owner");
-  expect(Object.keys(descriptor.tables).sort()).toEqual(["candidates", "claims", "employees", "job_openings", "leave_entries", "leave_requests", "leave_types", "payroll_lines", "payroll_runs", "policies", "postings", "rate_tables", "salaries"]);
+  expect(Object.keys(descriptor.tables).sort()).toEqual(["attendance_punches", "candidates", "claims", "employees", "job_openings", "leave_entries", "leave_requests", "leave_types", "leave_withdrawals", "payroll_lines", "payroll_runs", "policies", "postings", "rate_tables", "salaries", "staff_claims", "staff_leave_requests", "staff_link_requests", "staff_snapshots"]);
 });
 
 test("the ledger rules discriminate: each removed rule flips a verdict", () => {

@@ -7,7 +7,9 @@ import { listArgs } from "./recordQueries";
 import { PostingsPane, RatesPane, RunsPane, SalariesPane } from "./PayrollPanes";
 import RecordsPane from "./RecordsPane";
 import { useHrQuery } from "./resources";
-import { candidatesView, claimsView, leaveRequestsView, leaveTypesView, openingsView, policiesView } from "./views";
+import { candidatesView, claimsView, leaveRequestsView, leaveTypesView, openingsView, policiesView, staffClaimsView, staffLeaveRequestsView } from "./views";
+import AttendancePane from "./AttendancePane";
+import StaffAccounts from "./StaffAccounts";
 
 /** Every opening's title, for the candidates' opening filter (one page of up to 100). */
 const OPENING_TITLES = listArgs(openingsView, { status: "all", query: "", limit: 100 });
@@ -27,17 +29,28 @@ function SubTabs({ labels, current, onChange, onClose }: { labels: readonly stri
 }
 
 export const PoliciesTab = (p: PaneProps) => <RecordsPane {...p} view={policiesView} />;
-export const ClaimsTab = (p: PaneProps) => <RecordsPane {...p} view={claimsView} />;
+/** Claims the owner entered, and claims staff filed from their own view (0.5.0). */
+export function ClaimsTab(p: PaneProps) {
+  const [list, setList] = useState(0);
+  return (
+    <div className="hr-list">
+      <SubTabs labels={["Claims", "Staff claims"]} current={list} onChange={setList} onClose={p.onClose} />
+      <RecordsPane key={list} {...p} view={list === 0 ? claimsView : staffClaimsView} />
+    </div>
+  );
+}
+export const AttendanceTab = (p: PaneProps) => <AttendancePane scope={p.scope} canWrite={p.canWrite} canBatch={p.caps.batch} />;
+export const StaffAccountsTab = (p: PaneProps & { onBack: () => void }) => <StaffAccounts scope={p.scope} canWrite={p.canWrite} canBatch={p.caps.batch} onBack={p.onBack} />;
 
 export function LeaveTab(p: PaneProps) {
   const { t } = useLocale();
   const [list, setList] = useState(0);
   return (
     <div className="hr-list">
-      <SubTabs labels={["Leave requests", "Leave types", "Balances"]} current={list} onChange={setList} onClose={p.onClose} />
+      <SubTabs labels={["Leave requests", "Leave types", "Balances", "Staff requests"]} current={list} onChange={setList} onClose={p.onClose} />
       {list === 2
         ? (p.caps.aggregate ? <BalancesPane scope={p.scope} canWrite={p.canWrite} caps={p.caps} /> : <Notice>{t("This workspace does not offer balances to this screen. Ask the owner to update the app.")}</Notice>)
-        : <RecordsPane key={list} {...p} view={list === 0 ? leaveRequestsView : leaveTypesView} />}
+        : <RecordsPane key={list} {...p} view={list === 0 ? leaveRequestsView : list === 1 ? leaveTypesView : staffLeaveRequestsView} />}
     </div>
   );
 }

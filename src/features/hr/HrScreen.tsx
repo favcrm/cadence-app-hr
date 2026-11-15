@@ -9,12 +9,36 @@ import "./hr-layout.css";
 import "./hr-drawer.css";
 import { HrLocaleProvider, useLocale } from "./locale";
 import PeopleList from "./PeopleList";
-import { ClaimsTab, LeaveTab, PayrollTab, PoliciesTab, RecruitingTab } from "./Sections";
+import { AttendanceTab, ClaimsTab, LeaveTab, PayrollTab, PoliciesTab, RecruitingTab, StaffAccountsTab } from "./Sections";
+import StaffScreen from "./StaffScreen";
+import { probeViewer, type Viewer } from "./staff";
+import type { HostScope } from "./hostActions";
 
 // Waiting longer than this for the first verified host push means the host is
 // unreachable; the screen says so instead of spinning forever.
 const HOST_PUSH_TIMEOUT_MS = 15000;
-const TAB_LABEL: Record<Section, string> = { people: "People", policies: "Policies", leave: "Leave", claims: "Claims", payroll: "Payroll", recruiting: "Recruiting" };
+const TAB_LABEL: Record<Section, string> = { people: "People", policies: "Policies", leave: "Leave", claims: "Claims", payroll: "Payroll", recruiting: "Recruiting", attendance: "Attendance" };
+
+type ViewerState = { key: string; viewer: Viewer | null; failure: unknown };
+/**
+ * Owner or member, asked once per verified scope before any record is read: a member's read of an owner-only table is
+ * refused 403 and the board closes the frame. A board that does not offer `records.batch` cannot ask, and keeps the
+ * owner screen it had before 0.5.0.
+ */
+function useViewer(scope: HostScope | null, canAsk: boolean): ViewerState & { retry: () => void } {
+  const key = scope ? `${scope.installId}:${scope.digest}` : "";
+  const [state, setState] = useState<ViewerState>({ key: "", viewer: null, failure: null });
+  const [attempt, setAttempt] = useState(0);
+  useEffect(() => {
+    if (!scope) return;
+    if (!canAsk) { setState({ key, viewer: "owner", failure: null }); return; }
+    let live = true;
+    setState({ key, viewer: null, failure: null });
+    probeViewer(scope).then((viewer) => { if (live) setState({ key, viewer, failure: null }); }, (failure: unknown) => { if (live) setState({ key, viewer: null, failure: failure ?? new Error("unknown") }); });
+    return () => { live = false; };
+  }, [key, canAsk, attempt]); // eslint-disable-line react-hooks/exhaustive-deps
+  return { ...(state.key === key ? state : { key, viewer: null, failure: null }), retry: () => setAttempt((n) => n + 1) };
+}
 
 export default function HrScreen() {
   const snapshot = useScope();
@@ -33,6 +57,8 @@ function Body() {
   const [dismissed, setDismissed] = useState<string | null>(null);
   const [savedNotice, setSavedNotice] = useState(false);
   const detail = snapshot?.route.record_id ?? null;
+  const [peopleList, setPeopleList] = useState(0);
+  const who = useViewer(snapshot?.scope ?? null, snapshot?.actions.includes("records.batch") === true);
   useEffect(() => { setDismissed(null); }, [detail]);
   useEffect(() => {
     if (snapshot) return;
@@ -48,6 +74,12 @@ function Body() {
       : <Loading>{t("Waiting for the verified HR mount…")}</Loading>}</main>;
   }
   const { scope, route, actions } = snapshot;
+  if (who.viewer === null) {
+    return <main className="app-outlet hr">{who.failure !== null
+      ? <ErrorNotice onRetry={who.retry}>{t("HR could not tell whether you are the owner or a member of this workspace. Try again.")}</ErrorNotice>
+      : <Loading>{t("Opening HR…")}</Loading>}</main>;
+  }
+  if (who.viewer === "member") return <StaffScreen scope={scope} actions={actions} />;
   const canList = actions.includes("records.list");
   const canWrite = actions.includes("records.create") && actions.includes("records.update");
   // Balances need `records.aggregate`; a bulk post needs `records.batch`. A board that does not offer them keeps the rest working.
@@ -73,12 +105,14 @@ function Body() {
           : section === "claims" ? <ClaimsTab {...pane} />
           : section === "payroll" ? <PayrollTab {...pane} />
           : section === "recruiting" ? <RecruitingTab {...pane} />
+          : section === "attendance" ? <AttendanceTab {...pane} />
+          : peopleList === 1 ? <StaffAccountsTab {...pane} onBack={() => setPeopleList(0)} />
           : route.view === "new"
             ? <EmployeeNew scope={scope} canWrite={canWrite} onCancel={() => go({ view: "list", record_id: null })} onCreated={created} />
             : <PeopleList scope={scope} canWrite={canWrite} onNew={() => go({ view: "new", record_id: null })}
-                onSelect={(id) => { setDismissed(null); go({ view: "list", record_id: id }); }} />}
+                onSelect={(id) => { setDismissed(null); go({ view: "list", record_id: id }); }} onStaffAccounts={() => setPeopleList(1)} />}
       </div>
-      {canList && section === "people" && recordId !== null && (
+      {canList && section === "people" && peopleList === 0 && recordId !== null && (
         <EmployeeDrawer scope={scope} recordId={recordId} canWrite={canWrite} showBalances={caps.aggregate} onClose={() => { setDismissed(detail); go({ view: "list", record_id: null }); }} />
       )}
     </main>

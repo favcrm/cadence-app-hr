@@ -3,13 +3,14 @@ import { channel } from "./channel";
 import { assertCurrentScope, requireOperation, type DisplayScope } from "./scope";
 
 type Bag = Record<string, unknown>;
-export const SECTIONS = ["people", "policies", "leave", "claims", "payroll", "recruiting"] as const;
+export const SECTIONS = ["people", "policies", "leave", "claims", "payroll", "recruiting", "attendance"] as const;
 export type Section = (typeof SECTIONS)[number];
 export interface RecordFilter { field: string; op: "eq" | "in" | "prefix" | "contains" | "gte" | "lte"; value: string | number | boolean | (string | number | boolean)[] }
 export interface CallArgs {
   "records.list": { table?: string; query?: string; limit?: number; cursor?: string; filters?: RecordFilter[]; order_by?: { field: string; direction?: "asc" | "desc" } };
   "records.show": { table?: string; record_id: string };
-  "records.create": { table?: string; record_id: string; profile: unknown };
+  /** `record_id` is left out on a member's create into a `row_owner` table: the host names that row. */
+  "records.create": { table?: string; record_id?: string; profile: unknown };
   "records.update": { table?: string; record_id: string; expected_revision: number; profile: unknown };
   /** 1 to 200 creates in one all-or-nothing transaction; a duplicate unique key refuses the whole batch. */
   "records.batch": { items: { record_id: string; table?: string; profile: unknown }[] };
