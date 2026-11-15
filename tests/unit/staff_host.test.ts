@@ -113,6 +113,10 @@ test("a member's lost reply is found by its client_ref, so a retry files nothing
   // The same form sent again meets its own row (the unique member_id + client_ref): still one punch.
   await expect(S.punch(scope, snap, "in", NOW, "app-000000000009", amy)).resolves.toMatchObject({ id: row.id });
   expect(host.of(STAFF.punches).length).toBe(1);
+  // A conflict that did not land (the host's per-member row limit answers 409) is read back and said plainly: not saved.
+  host.fault("records.create", new ApiError("member_row_limit", 409, { code: "conflict" }), { table: STAFF.punches });
+  await expect(S.punch(scope, snap, "out", NOW + 60, "app-00000000000a", amy)).rejects.toThrow(/This was not saved/);
+  expect(host.of(STAFF.punches).length).toBe(1);
 });
 
 test("acceptance 2: a member cannot see another member's rows, any salary, or the owner tabs' tables", async () => {
@@ -240,7 +244,7 @@ test("a row filed under another employee is never approved, and a member's own s
   expect(latestSnapshot(await S.listMine(scope, STAFF.snapshots, {}, eve))).toBeNull();
   // Amy's own punch is trusted as hers; Eve's punch naming Amy's record is shown to the owner as not from the linked account.
   const evePunch = await eve.file(scope, { employee_id: "emp-amy", at: NOW, direction: "in", method: "import", client_ref: "app-forged" }, STAFF.punches);
-  const punches = await S.readPunches(scope, NOW - 3600, owner);
+  const { punches } = await S.readPunches(scope, NOW - 3600, owner);
   const row = punches.find((x) => x.id === evePunch.id)!;
   expect(row.kind).toBe("app"); // its method column says "import"; its host-named id says a member filed it
   const directory = await S.readDirectory(scope, owner);
@@ -294,4 +298,18 @@ test("import from an attendance device: preview, import, and a second run adds n
   expect(host.of(STAFF.punches).length).toBe(3);
   // The member sees the imported punches of their own employee record (stamped with their linked account).
   expect((await S.listMine(scope, STAFF.punches, {}, host.as(member(AMY)))).length).toBe(2);
+});
+
+test("a large import and a staff-wide balance update are cut to the board's batch byte limit", async () => {
+  const { host, owner } = await world();
+  // 300 punches: about 280 bytes each, so 200 items would be about 56 KB, over the board's 16,384-byte batch limit.
+  const csv = Array.from({ length: 300 }, (_, i) => `E00${1 + (i % 2)},2026-11-${String(1 + Math.floor(i / 20)).padStart(2, "0")} ${String(7 + (i % 12)).padStart(2, "0")}:${String(i % 60).padStart(2, "0")},${i % 2 ? "out" : "in"}`).join("\n");
+  const lines = await S.previewImport(scope, csv, owner);
+  expect(lines.filter((l) => l.status === "new").length).toBe(300);
+  expect(await S.importPunches(scope, lines, undefined, owner)).toEqual({ imported: 300, alreadyThere: 0 });
+  expect(await S.publishAllSnapshots(scope, NOW + 120, owner)).toBe(2);
+  const batches = host.calls.filter((c) => c.verb === "records.batch" && c.status === 200);
+  expect(batches.length).toBeGreaterThan(5);
+  for (const b of batches) expect(new TextEncoder().encode(JSON.stringify(b.args)).length).toBeLessThanOrEqual(16384);
+  expect(host.of(STAFF.punches).length).toBe(300);
 });

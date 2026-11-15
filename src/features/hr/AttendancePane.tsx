@@ -33,7 +33,7 @@ function Punches({ scope }: { scope: HostScope }) {
   const from = useMemo(() => hkDayStart(Math.floor(Date.now() / 1000)) - (DAYS - 1) * 86400, []);
   const data = useHrLoader(scope, "punches", { from }, async () => {
     const [punches, directory] = await Promise.all([readPunches(scope, from), readDirectory(scope)]);
-    return { punches, directory: new Map(directory.map((e) => [e.id, e])) };
+    return { punches: punches.punches, more: punches.more, directory: new Map(directory.map((e) => [e.id, e])) };
   });
   const refresh = () => { void data.store.refresh(); };
   const rows = data.data?.punches ?? [];
@@ -42,6 +42,7 @@ function Punches({ scope }: { scope: HostScope }) {
       <p className="text-label text-ink-400">{t("The last 7 days, newest first, in Hong Kong time. Staff punches record the time only; no location is recorded. A punch is never changed: add a correction instead.")}</p>
       {data.loading && <Loading>{t("Reading punches…")}</Loading>}
       {data.error !== null && !data.loading && <ErrorNotice onRetry={refresh}>{t(hostErrorText(data.failure, "The punches could not be read."))}</ErrorNotice>}
+      {data.data?.more && <Notice>{t("Only the newest 100 punches are shown. Ask the assistant for a full attendance review of the period.")}</Notice>}
       {data.data && rows.length === 0 && <EmptyState name="punches" title={t("No punches in the last 7 days")}>{t("Staff clock in from their own view of HR, or import punches from an attendance device.")}</EmptyState>}
       {rows.length > 0 && (
         <DataTable<Punch>

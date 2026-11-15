@@ -9,6 +9,7 @@ import {
   type DirectoryEntry, type Direction, type ImportLine, type Punch, type Snapshot,
 } from "../../domain/staff";
 import { decisionPatch, FormError, newRecordId, resolveEmployee, type Decision, type Values } from "../../domain/records";
+import { chunkBatch } from "../../domain/leave";
 import { approveLeave, listAll, readBalances, rejectLeave } from "./ledger";
 import { hostActions, type HostActions, type HostRecord, type HostScope } from "./hostActions";
 
@@ -60,7 +61,8 @@ export async function readMemberHome(scope: HostScope, actions: HostActions = ho
 }
 /**
  * File one row as the member. A lost reply or a refusal that might have landed is resolved by reading the member's
- * own rows for the form's `client_ref`: found means saved; not found re-throws.
+ * own rows for the form's `client_ref`: found means saved; not found means not saved (said plainly). If the read-back
+ * itself fails, that failure is thrown and the screen says the row may not be saved.
  */
 async function fileOnce(scope: HostScope, table: string, profile: Record<string, unknown>, ref: { field: string; value: string } | null, actions: HostActions): Promise<HostRecord> {
   assertMemberTable(table);
@@ -69,10 +71,12 @@ async function fileOnce(scope: HostScope, table: string, profile: Record<string,
   } catch (error) {
     if (!unsure(error) || ref === null) throw error;
     const found = await listMine(scope, table, { filters: [{ field: ref.field, op: "eq", value: ref.value }], limit: 2 }, actions);
-    if (found.length === 0) throw error;
+    // The read-back answered and the row is not there: it was not saved (a conflict such as the member row limit).
+    if (found.length === 0) throw new FormError(null, NOT_SAVED_TEXT);
     return found[0]!;
   }
 }
+const NOT_SAVED_TEXT = "This was not saved. Try again; if it keeps failing, tell the owner.";
 const NOT_LINKED_TEXT = "Your account is not linked to an employee record yet. Ask the owner to link you in People.";
 function linked(snapshot: Snapshot | null) {
   if (!isLinked(snapshot)) throw new FormError(null, NOT_LINKED_TEXT);
@@ -139,7 +143,8 @@ export async function publishAllSnapshots(scope: HostScope, now: number, actions
   if (linkedRows.length === 0) return 0;
   const facts = await leaveFacts(scope, linkedRows.map((e) => e.id), actions);
   const items = linkedRows.map((e) => snapshotItem(e, e.memberId!, facts, now));
-  for (let i = 0; i < items.length; i += 200) await actions.batch(scope, items.slice(i, i + 200));
+  // Chunked by count and by the board's batch byte limit, like the ledger's batches.
+  for (const chunk of chunkBatch(items)) await actions.batch(scope, chunk);
   return items.length;
 }
 export interface LinkRequestRow { id: string; memberId: string; name: string; employeeNo: string | null; requestedAt: number; linkedTo: DirectoryRow | null }
@@ -232,9 +237,10 @@ export async function decideStaff(scope: HostScope, table: string, record: HostR
 }
 
 // ---- the owner: attendance ------------------------------------------------------------------------------------------
-export async function readPunches(scope: HostScope, from: number, actions: HostActions = hostActions): Promise<Punch[]> {
+/** The newest 100 punches since `from`; `more` says the page was cut (the list shows so instead of implying it is all). */
+export async function readPunches(scope: HostScope, from: number, actions: HostActions = hostActions): Promise<{ punches: Punch[]; more: boolean }> {
   const page = await actions.list(scope, { table: STAFF.punches, filters: [{ field: "at", op: "gte", value: from }], order_by: { field: "at", direction: "desc" }, limit: 100 });
-  return page.records.flatMap((r) => { const x = readPunch(r); return x ? [x] : []; });
+  return { punches: page.records.flatMap((r) => { const x = readPunch(r); return x ? [x] : []; }), more: page.nextCursor !== null || page.truncated };
 }
 const directoryMap = (rows: DirectoryRow[]) => new Map<string, DirectoryEntry>(rows.filter((e) => e.employeeNo !== "").map((e) => [e.employeeNo, { id: e.id, memberId: e.memberId }]));
 /** Which of these punch ids are stored, 50 at a time (the `in` filter's limit). A failed read throws. */
@@ -256,26 +262,27 @@ export async function previewImport(scope: HostScope, text: string, actions: Hos
 }
 export interface ImportResult { imported: number; alreadyThere: number }
 /**
- * Import the preview's new lines in batches of up to 200 under their fixed ids. A batch refused for an id that is
+ * Import the preview's new lines in batches (at most 200 items and the board's 16,384-byte batch limit, about 50
+ * punches) under their fixed ids. A batch refused for an id that is
  * already stored (an earlier run, or a lost reply) is read back: the stored ones count as already there, the rest are
  * sent once more. Running the import again adds nothing twice.
  */
 export async function importPunches(scope: HostScope, lines: readonly ImportLine[], onProgress?: (done: number, total: number) => void, actions: HostActions = hostActions): Promise<ImportResult> {
   const wanted = lines.filter((l) => l.status === "new");
   const result: ImportResult = { imported: 0, alreadyThere: 0 };
-  for (let i = 0; i < wanted.length; i += 200) {
-    let chunk = wanted.slice(i, i + 200);
+  const item = (l: ImportLine) => ({ record_id: l.recordId!, table: STAFF.punches, profile: importProfile(l) });
+  for (let chunk of chunkBatch(wanted.map(item))) {
     try {
-      await actions.batch(scope, chunk.map((l) => ({ record_id: l.recordId!, table: STAFF.punches, profile: importProfile(l) })));
+      await actions.batch(scope, chunk);
       result.imported += chunk.length;
     } catch (error) {
       if (!unsure(error)) throw error;
-      const present = await storedPunches(scope, chunk.map((l) => l.recordId!), actions);
+      const present = await storedPunches(scope, chunk.map((i) => i.record_id), actions);
       if (present.size === 0) throw error;
       result.alreadyThere += present.size;
-      chunk = chunk.filter((l) => !present.has(l.recordId!));
+      chunk = chunk.filter((i) => !present.has(i.record_id));
       if (chunk.length > 0) {
-        await actions.batch(scope, chunk.map((l) => ({ record_id: l.recordId!, table: STAFF.punches, profile: importProfile(l) })));
+        await actions.batch(scope, chunk);
         result.imported += chunk.length;
       }
     }

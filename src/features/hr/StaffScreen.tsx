@@ -192,7 +192,7 @@ function MyLeave({ scope, snapshot }: { scope: HostScope; snapshot: Snapshot & {
             const days = Number.isSafeInteger(x.half_days) ? fromHalfDays(x.half_days as number) : "—";
             return (
               <div key={r.id} className="hr-staff-row">
-                <div className="hr-staff-l"><span className="num">{str(x.start_date)}{x.end_date !== x.start_date ? ` → ${str(x.end_date).slice(5)}` : ""} · {t("{days} days").replace("{days}", days)}</span><span className="text-micro text-ink-500">{typeName(str(x.leave_type))}</span></div>
+                <div className="hr-staff-l"><span className="num">{str(x.start_date)}{x.end_date !== x.start_date ? ` → ${str(x.end_date).slice(5)}` : ""} · {t(days === "1" ? "{days} day" : "{days} days").replace("{days}", days)}</span><span className="text-micro text-ink-500">{typeName(str(x.leave_type))}</span></div>
                 <div className="hr-staff-r">{pill(status, t)}{status === "pending" && <Button size="sm" variant="ghost" disabled={pending} onClick={() => setWithdrawing(r)}>{t("Withdraw")}</Button>}</div>
               </div>
             );
@@ -288,14 +288,14 @@ function Clock({ scope, snapshot }: { scope: HostScope; snapshot: Snapshot & { e
   const today = hkParts(now).date;
   const press = () => {
     const at = nowS();
-    setPending(true); setResult(null);
+    setNow(at); setPending(true); setResult(null);
     void punch(scope, snapshot, direction, at, ref).then(() => { setResult({ kind: "done", direction, at }); setRef(clientRef("app")); void mine.store.refresh(); })
       .catch((e: unknown) => { setResult({ kind: unsure(e) ? "unsure" : "fail" }); void mine.store.refresh(); })
       .finally(() => setPending(false));
   };
   const todays = punches.filter((x) => x.at >= hkDayStart(now)).sort((a, b) => a.at - b.at);
   const firstIn = todays.find((x) => x.direction === "in"), lastOut = todays.filter((x) => x.direction === "out").at(-1);
-  const week = daySummary(punches, mine.data?.leave ?? [], hkParts(weekStart).date, today, today).reverse();
+  const week = daySummary(punches, mine.data?.leave ?? [], hkParts(weekStart).date, today, today);
   const typeName = (code: string) => snapshot.types.find((x) => x.code === code)?.name ?? code;
   const dayLabel = (date: string) => formatDate(Date.parse(`${date}T12:00:00+08:00`), { month: "numeric", day: "numeric", weekday: "short", timeZone: TZ });
   return (

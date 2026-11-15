@@ -470,6 +470,7 @@ export const zhHK: Record<string, string> = {
   "Your requests could not be read.": "未能讀取你的申請。",
   "You have not requested leave from here yet.": "你暫時未有在此申請假期。",
   "{days} days": "{days} 日",
+  "{days} day": "{days} 日",
   "Withdraw": "撤回",
   "Withdrawn": "已撤回",
   "Unknown": "不明",
@@ -515,4 +516,6 @@ export const zhHK: Record<string, string> = {
   "The direction is not in or out.": "方向不是 in 或 out。",
   "The same punch appears earlier in this file.": "相同的打卡紀錄已在此檔案較前位置出現。",
   "No employee has this number in People.": "員工名冊內沒有此編號的員工。",
+  "Only the newest 100 punches are shown. Ask the assistant for a full attendance review of the period.": "只顯示最新的 100 項打卡紀錄。如需該期間的完整考勤檢查，請詢問助理。",
+  "This was not saved. Try again; if it keeps failing, tell the owner.": "未有儲存。請再試一次；如持續失敗，請通知東主。",
 };
