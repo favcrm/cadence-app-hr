@@ -4,7 +4,10 @@ import { parseMonth, signedDays, SKIP_TEXT, type AccrualPlan } from "../../domai
 import { emptyValues, ADJUSTMENT, todayLocal, newRecordId, type Values } from "../../domain/records";
 import type { HostScope } from "./hostActions";
 import { hostErrorText } from "./hostErrors";
-import { adjustBalance, adjustmentRef, listAll, PostStopped, planMonth, planReconcile, postEntries, readBalances, type PostResult, type ReconcilePlan } from "./ledger";
+import {
+  adjustBalance, adjustmentRef, listAll, PostStopped, planMonth, planReconcile, planRecovery, postEntries, readBalances, RECOVERY_LIMIT, type PostResult, type ReconcilePlan,
+  type RecoveryPlan,
+} from "./ledger";
 import { useLocale } from "./locale";
 import RecordForm, { type RecordProblem } from "./RecordForm";
 import { problemFor } from "./recordsSubmit";
@@ -149,6 +152,42 @@ function RecordEarlier({ scope, caps, onPosted }: { scope: HostScope; caps: Ledg
   );
 }
 
+/** Rejected or cancelled requests whose deduction still stands: list them, then write each one's reversal once. */
+function RecoverDeductions({ scope, caps, nameOf, onPosted }: { scope: HostScope; caps: LedgerCaps; nameOf: (id: string) => string; onPosted: () => void }) {
+  const { t, formatNumber } = useLocale();
+  const n = (text: string, count: number) => t(text).replace("{count}", formatNumber(count));
+  return (
+    <StepAction<RecoveryPlan>
+      title={t("Reverse deductions on rejected requests")}
+      intro={t("A request rejected or cancelled outside this screen, for example from the chat, after its approval had already deducted the leave keeps that deduction. This finds those requests and adds the reversing entry once each; requests already reversed are left alone.")}
+      disabled={caps.aggregate && caps.batch ? null : t("This workspace does not offer batch entries to this screen, so this cannot run here.")}
+      reviewLabel={t("Find rejected requests that still deduct leave")} postLabel={(count) => t("Reverse {count} deductions").replace("{count}", String(count))}
+      review={() => planRecovery(scope)}
+      summary={(plan) => {
+        const shown = plan.rows.slice(0, 10);
+        const staff = plan.rows.filter((r) => r.staff).length;
+        return (
+          <div className="grid gap-1">
+            <p className="text-label">{n("{count} rejected or cancelled requests still deduct leave.", plan.rows.length)}{plan.alreadyThere > 0 && <> {n("{count} were already reversed.", plan.alreadyThere)}</>}</p>
+            {shown.length > 0 && (
+              <ul className="hr-reasons">
+                {shown.map((r) => <li key={r.requestId}>{nameOf(r.entry.employee_id)} — {r.entry.leave_type}, {t("{days} days").replace("{days}", signedDays(r.entry.half_days))}</li>)}
+              </ul>
+            )}
+            {plan.rows.length > shown.length && <p className="text-micro text-ink-500">{n("and {count} more requests", plan.rows.length - shown.length)}</p>}
+            {plan.unusable.length > 0 && <p className="text-label text-ink-400">{n("{count} cannot be reversed here because their leave entry is not in the expected form. Correct those balances with an adjustment.", plan.unusable.length)}</p>}
+            {plan.more && <p className="text-label text-ink-400">{n("Only the newest {count} rejected and {count} cancelled requests in each of Leave requests and Staff requests were checked; older ones are not shown.", RECOVERY_LIMIT)}</p>}
+            {staff > 0 && <p className="text-label text-ink-400">{n("{count} of them were filed from the staff view. After reversing, use Update staff balances in People → Staff accounts so those employees see the change.", staff)}</p>}
+          </div>
+        );
+      }}
+      count={(plan) => plan.rows.length}
+      post={(plan, onProgress) => postEntries(scope, plan.rows.map((r) => r.entry), onProgress)}
+      onPosted={onPosted}
+    />
+  );
+}
+
 function AdjustForm({ scope, onDone, onCancel }: { scope: HostScope; onDone: () => void; onCancel: () => void }) {
   const { t } = useLocale();
   const [pending, setPending] = useState(false);
@@ -222,6 +261,7 @@ export default function BalancesPane({ scope, canWrite, caps }: { scope: HostSco
           <div className="hr-actions"><Button variant="primary" onClick={() => { setSaved(false); setAdjusting(true); }}>{t("Adjust balance")}</Button></div>
           <RunAccrual scope={scope} caps={caps} onPosted={refresh} />
           <RecordEarlier scope={scope} caps={caps} onPosted={refresh} />
+          <RecoverDeductions scope={scope} caps={caps} nameOf={nameOf} onPosted={refresh} />
         </div>
       )}
     </section>

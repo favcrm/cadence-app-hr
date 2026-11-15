@@ -43,8 +43,9 @@ export default function BalanceHint({ scope, values }: { scope: HostScope; value
   if (state.status === "error") return <p className="text-label text-ink-400" role="status">{t("The leave balance could not be read, so none is shown. You can still save the request.")}</p>;
   const view = balanceHintView(state.balances, state.employeeId, leaveType, toHalfDays(values.days ?? ""));
   const asOf = formatDate(Date.parse(state.balances.asOf), { dateStyle: "medium", timeStyle: "short" });
-  const after = view.kind === "cut_short" ? null : view.after;
-  // Never "0 days" for someone with no entries: like their own balances and the leave-desk skill, say none is recorded.
+  // Never "0 days" for someone with no entries, and no "after" figure from a balance that is not there: like their own
+  // balances and the leave-desk skill, say none is recorded.
+  const after = view.kind === "balance" ? view.after : null;
   return (
     <div className="grid gap-1" data-balance-hint>
       <p className="text-label" role="status">

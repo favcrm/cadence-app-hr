@@ -1,8 +1,8 @@
 // The leave ledger's host calls: read balances, approve a leave request (entry first, then the status), run accrual,
-// record entries for approved requests that have none, and correct a balance. Pure orchestration over `HostActions`,
-// so tests drive it with an in-memory host. Entries are only ever created, never updated. Every write is safe to
-// repeat: the unique `source_ref` makes a second entry impossible, and a conflict counts as "already recorded" only
-// after a re-read proves the entry is there and is the same one.
+// record entries for approved requests that have none, reverse deductions left on rejected requests, and correct a
+// balance. Pure orchestration over `HostActions`, so tests drive it with an in-memory host. Entries are only ever
+// created, never updated. Every write is safe to repeat: the unique `source_ref` makes a second entry impossible, and
+// a conflict counts as "already recorded" only after a re-read proves the entry is there and is the same one.
 import { ApiError } from "@cadence/screen-ui";
 import {
   adjustmentEntry, balanceFor, chunkBatch, planAccrual, reversalEntry, reversalRef, sameEntry, takenEntry, takenRef, type AccrualPlan, type Balances, type EmployeeFacts,
@@ -252,6 +252,54 @@ export async function planReconcile(scope: HostScope, actions: HostActions = hos
     if (!built.ok) plan.unusable.push({ id: request.id, reason: built.reason });
     else if (refs.has(built.entry.source_ref)) plan.alreadyThere += 1;
     else plan.entries.push(built.entry);
+  }
+  return plan;
+}
+
+// ---- deductions left on rejected or cancelled requests -----------------------------------------------------
+/** Pages of 100 read, newest first, of each request table's rejected and of its cancelled requests. */
+export const RECOVERY_PAGES = 5;
+export const RECOVERY_LIMIT = RECOVERY_PAGES * PAGE;
+const NEWEST = { field: "created_at", direction: "desc" } as const;
+/** Up to `pages` pages of a filtered list, newest first. `more` says rows were left unread. A failed page rejects. */
+async function listNewest(scope: HostScope, table: string, filters: RecordFilter[], pages: number, actions: HostActions): Promise<{ records: HostRecord[]; more: boolean }> {
+  const records: HostRecord[] = [];
+  let cursor: string | undefined;
+  for (let page = 0; page < pages; page += 1) {
+    const result = await actions.list(scope, { table, filters, order_by: NEWEST, limit: PAGE, ...(cursor ? { cursor } : {}) });
+    records.push(...result.records);
+    if (result.nextCursor === null) return { records, more: result.truncated };
+    cursor = result.nextCursor;
+  }
+  return { records, more: true };
+}
+
+export interface RecoveryRow { requestId: string; staff: boolean; entry: LedgerEntry }
+export interface RecoveryPlan { rows: RecoveryRow[]; alreadyThere: number; unusable: { id: string; reason: string }[]; more: boolean }
+/**
+ * Rejected or cancelled requests, owner and staff, whose `taken` entry still stands with no `reversal-taken-<id>`: an
+ * approval wrote the entry and stopped, and the request was then decided outside the screen (a chat-staged rejection),
+ * so the reject path never reversed it. Each gets the reject path's own reversal (`reversalEntry`, from the stored
+ * entry). Bounded reads only: the newest `RECOVERY_PAGES` pages of each table's rejected and cancelled requests (a
+ * member files only `pending` rows and never updates, so only owner decisions are listed here; `more` says older
+ * ones were not read), then the ledger by exact `source_ref`, 50 at a time. Writes nothing.
+ */
+export async function planRecovery(scope: HostScope, actions: HostActions = hostActions): Promise<RecoveryPlan> {
+  const tables = [REQUEST, STAFF_REQUEST];
+  const reads = await Promise.all(tables.flatMap((table) => (["rejected", "cancelled"] as const).map(async (status) => ({
+    table, ...(await listNewest(scope, table, [{ field: "status", op: "eq", value: status }], RECOVERY_PAGES, actions)),
+  }))));
+  const requests = new Map<string, boolean>();
+  for (const read of reads) for (const r of read.records) requests.set(r.id, read.table === STAFF_REQUEST);
+  const taken = await entriesPresent(scope, [...requests.keys()].map(takenRef), actions);
+  const deducted = [...requests.keys()].filter((id) => taken.has(takenRef(id)));
+  const reversed = await entriesPresent(scope, deducted.map(reversalRef), actions);
+  const plan: RecoveryPlan = { rows: [], alreadyThere: 0, unusable: [], more: reads.some((r) => r.more) };
+  for (const id of deducted) {
+    if (reversed.has(reversalRef(id))) { plan.alreadyThere += 1; continue; }
+    const built = reversalEntry(id, taken.get(takenRef(id))!.profile);
+    if (!built.ok) { plan.unusable.push({ id, reason: built.reason }); continue; }
+    plan.rows.push({ requestId: id, staff: requests.get(id)!, entry: built.entry });
   }
   return plan;
 }

@@ -153,12 +153,12 @@ test("signed days print exactly: -1 half-day is -0.5, and typing days gives half
   for (const bad of ["0", "-0", "0.0", "1.3", "", "abc", "1,5", "--1", "1.25", "99999"]) expect([bad, L.parseSignedHalfDays(bad)]).toEqual([bad, null]);
 });
 
-test("a request balance: a missing group is 0 only when the aggregate was complete", () => {
+test("a request balance: no figure after the request is worked out from a missing group, complete or not (HR-10)", () => {
   const balances: L.Balances = { asOf: "2026-03-01T00:00:00.000Z", truncated: false, groups: [{ employeeId: "a", leaveType: "ANNUAL", halfDays: 6, entries: 3 }] };
   expect(L.balanceFor(balances, "a", "ANNUAL")).toBe(6);
   expect(L.balanceFor(balances, "a", "SICK")).toBeNull();
   expect(L.balanceAfter(balances, "a", "ANNUAL", 8)).toBe(-2);
-  expect(L.balanceAfter(balances, "a", "SICK", 2)).toBe(-2);
+  expect(L.balanceAfter(balances, "a", "SICK", 2)).toBeNull();
   expect(L.balanceAfter({ ...balances, truncated: true }, "a", "SICK", 2)).toBeNull();
   expect(L.balanceAfter(balances, "a", "ANNUAL", null)).toBeNull();
 });
@@ -211,8 +211,9 @@ test("the reversal of a stored taken entry gives its half-days back under a ref 
 test("the balance next to a request: no group in a complete answer is 'none recorded', never 0", () => {
   const asOf = "2026-03-09T01:02:03.000Z";
   const complete: L.Balances = { groups: [], truncated: false, asOf };
-  expect(L.balanceHintView(complete, "emp-a", "ANNUAL", 4)).toEqual({ kind: "none_recorded", after: -4 });
-  expect(L.balanceHintView(complete, "emp-a", "ANNUAL", null)).toEqual({ kind: "none_recorded", after: null });
+  // No "after" figure either: a balance that is not recorded is not 0 (HR-10).
+  expect(L.balanceHintView(complete, "emp-a", "ANNUAL", 4)).toEqual({ kind: "none_recorded" });
+  expect(L.balanceHintView(complete, "emp-a", "ANNUAL", null)).toEqual({ kind: "none_recorded" });
   expect(L.balanceHintView({ ...complete, truncated: true }, "emp-a", "ANNUAL", 4)).toEqual({ kind: "cut_short" });
   const some: L.Balances = { groups: [{ employeeId: "emp-a", leaveType: "ANNUAL", halfDays: 11, entries: 2 }], truncated: true, asOf };
   expect(L.balanceHintView(some, "emp-a", "ANNUAL", 3)).toEqual({ kind: "balance", halfDays: 11, after: 8 });
