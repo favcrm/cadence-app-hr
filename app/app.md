@@ -13,11 +13,10 @@ listing:
   tags: [hr, people, leave, claims, recruiting]
   publisher:
     name: Cadence
-  about: HR keeps your team directory, company policies, leave requests, expense claims and job openings with their candidates. Leave balances are the sum of a ledger (accrued, taken, adjusted), so approving deducts leave once and a correction is a new entry. The owner decides every leave request and claim. The chat agent answers policy questions with the policy title and date, and stages leave requests, claims, job descriptions and screening notes for the owner to approve. It never approves, rejects, hires or moves a stage. Records are owner-only. No pay, identity number, bank or medical data is stored.
+  about: HR keeps your team directory, company policies, leave requests, expense claims, job openings and candidates. Leave balances are the sum of a ledger (accrued, taken, adjusted), so approving deducts leave once and a correction is a new entry. The owner decides every leave request and claim. The chat agent answers policy questions with the policy title and date, and stages leave requests, claims, job descriptions and screening notes for the owner to approve. It never approves, rejects, hires or moves a stage. Records are owner-only. No pay, identity number, bank or medical data is stored.
   can:
     - Keep employees and policies; answer a policy question with its title and date
-    - Queue leave requests and expense claims for the owner to approve or reject
-    - Keep each employee's leave balance as a ledger: approval deducts, accrual adds, a correction is a new entry; the agent reads the same balance the screen shows
+    - Queue leave and claims for the owner; leave balances are a ledger the agent reads like the screen
     - Keep openings and candidates; screening notes give reasons and never move a stage
     - Let the chat agent look records up and stage changes for the owner to approve
     - Draft a short welcome note for a new employee from facts you paste (text only; it sends nothing)
@@ -28,7 +27,7 @@ listing:
       - Your employee directory, including names, employee numbers, work email addresses and phone numbers
       - Your company policy text
       - Leave requests and expense claims with employee names, dates, merchants and amounts
-      - A leave ledger: one entry per accrual, approved leave or adjustment, with the employee, leave type, half days, date and a reference
+      - A leave ledger with one entry per accrual, approved leave or adjustment, giving employee, leave type, half days and date
       - Candidates for your job openings, including names, contact details and the text of their CVs, who are not your employees
     personal: true
 ---
