@@ -16,11 +16,11 @@ const LOCALES = ["en", "zh-TW"] as const;
 const ID = /^[A-Za-z0-9_-]{1,128}$/;
 const SEARCH: Record<string, string[]> = {
   employees: ["display_name", "employee_no", "email", "department"], policies: ["title", "body"], leave_types: ["code", "name"], leave_requests: ["employee_name", "leave_type", "reason"],
-  claims: ["employee_name", "merchant", "description"], job_openings: ["title"], candidates: ["display_name", "email", "cv_text"],
+  claims: ["employee_name", "merchant", "description"], job_openings: ["title"], candidates: ["display_name", "email", "cv_text"], leave_entries: ["source_ref", "note"],
 };
 const OPEN: Record<string, string> = { leave_requests: "pending", claims: "submitted" };
 const SECTIONS = ["people", "policies", "leave", "claims", "recruiting"];
-const ACTIONS = ["records.list", "records.show", "records.create", "records.update", "screen.route.patch"];
+const ACTIONS = ["records.list", "records.show", "records.create", "records.update", "records.batch", "records.aggregate", "screen.route.patch"];
 const INSTALL = "install-preview";
 const DIGEST = `sha256:${"c".repeat(64)}`;
 
@@ -69,6 +69,28 @@ function sendProjection() {
   });
 }
 
+const hit = (f: { field: string; op: string; value: unknown }, r: SeedRow) => {
+  const v = r.profile[f.field];
+  switch (f.op) {
+    case "in": return Array.isArray(f.value) && f.value.includes(v);
+    case "prefix": return typeof v === "string" && typeof f.value === "string" && v.startsWith(f.value);
+    case "contains": return typeof v === "string" && typeof f.value === "string" && v.includes(f.value);
+    default: return v === f.value;
+  }
+};
+const failed = () => new Refused(refusal("failed", "Cadence refused this request. Inspect fresh status before retrying an effect."));
+const KINDS = ["accrual", "taken", "adjustment", "carry_forward", "expiry"];
+/** The ledger's declared rules: only creates, a closed kind, a signed non-zero count with the right sign, and an adjustment needs a note. */
+function ledgerRule(profile: SeedRow["profile"]) {
+  const half = profile.half_days, kind = profile.kind;
+  if (!KINDS.includes(String(kind)) || !Number.isInteger(half) || half === 0) throw failed();
+  if (["accrual", "carry_forward"].includes(String(kind)) && (half as number) < 1) throw failed();
+  if (["taken", "expiry"].includes(String(kind)) && (half as number) > -1) throw failed();
+  if (kind === "adjustment" && (typeof profile.note !== "string" || profile.note === "")) throw failed();
+  for (const key of ["employee_id", "leave_type", "effective_date", "source_ref"]) if (typeof profile[key] !== "string" || profile[key] === "") throw failed();
+}
+const duplicateRef = (rows: SeedRow[], profile: SeedRow["profile"]) => rows.some((r) => r.profile.source_ref === profile.source_ref);
+
 function call(verb: string, args: Record<string, unknown>): unknown {
   if (scenario === "refused" && verb !== "screen.route.patch") throw new Refused(refusal("failed", "Cadence refused this request. Inspect fresh status before retrying an effect."));
   if (scenario === "lost" && verb !== "screen.route.patch") throw new Refused(refusal("unauthorized", "This app's access is no longer available."));
@@ -78,7 +100,6 @@ function call(verb: string, args: Record<string, unknown>): unknown {
       const filters = Array.isArray(args.filters) ? (args.filters as { field: string; op: string; value: unknown }[]) : [];
       const name = table(args);
       const columns = SEARCH[name] ?? [];
-      const hit = (f: { field: string; op: string; value: unknown }, r: SeedRow) => (f.op === "in" ? Array.isArray(f.value) && f.value.includes(r.profile[f.field]) : r.profile[f.field] === f.value);
       const matched = rowsOf(name).filter((r) => (!q || columns.some((c) => String(r.profile[c] ?? "").toLowerCase().includes(q))) && filters.every((f) => hit(f, r))).sort((a, b) => (a.id < b.id ? -1 : 1));
       const after = typeof args.cursor === "string" ? matched.findIndex((r) => r.id === args.cursor) + 1 : 0;
       const limit = typeof args.limit === "number" ? args.limit : 25;
@@ -100,6 +121,11 @@ function call(verb: string, args: Record<string, unknown>): unknown {
       if (OPEN[table(args)] && profile.status !== undefined && profile.status !== OPEN[table(args)]) throw new Refused(refusal("failed", "Cadence refused this request. Inspect fresh status before retrying an effect."));
       if (OPEN[table(args)]) profile.status = OPEN[table(args)]!;
       if (table(args) === "employees" && rows.some((r) => r.profile.employee_no === profile.employee_no)) throw new Refused(refusal("unavailable", "Cadence refused this request. Inspect fresh status before retrying an effect."));
+      if (table(args) === "leave_entries") {
+        ledgerRule(profile);
+        // The deployed host answers a unique-index violation as a store failure (503, `unavailable`); a later board answers 409.
+        if (duplicateRef(rows, profile)) throw new Refused(refusal(query.get("unique") === "409" ? "conflict" : "unavailable", "Cadence refused this request. Inspect fresh status before retrying an effect."));
+      }
       const row: SeedRow = { id, revision: 1, profile };
       rows.push(row);
       return { record: receipt(row) };
@@ -108,6 +134,7 @@ function call(verb: string, args: Record<string, unknown>): unknown {
       const rows = rowsOf(table(args));
       const row = rows.find((r) => r.id === args.record_id);
       if (!row) throw new Refused(refusal("not_found", "That record is not available."));
+      if (table(args) === "leave_entries") throw failed(); // append_only: no update, ever
       // The write rule the descriptor declares: only an open request or claim can change.
       if (OPEN[table(args)] && row.profile.status !== OPEN[table(args)]) throw new Refused(refusal("failed", "Cadence refused this request. Inspect fresh status before retrying an effect."));
       // The stale scenario: someone else saves first, so the first update meets a newer revision.
@@ -117,6 +144,42 @@ function call(verb: string, args: Record<string, unknown>): unknown {
       if (table(args) === "employees" && rows.some((r) => r.id !== row.id && r.profile.employee_no === profile.employee_no)) throw new Refused(refusal("unavailable", "Cadence refused this request. Inspect fresh status before retrying an effect."));
       row.profile = profile; row.revision += 1;
       return { record: receipt(row) };
+    }
+    case "records.batch": {
+      const batch = Array.isArray(args.items) ? (args.items as { record_id?: unknown; table?: unknown; profile?: SeedRow["profile"] }[]) : [];
+      if (batch.length < 1 || batch.length > 200) throw failed();
+      const staged: Record<string, SeedRow[]> = {};
+      const seenIds = new Set<string>();
+      for (const item of batch) {
+        const name = typeof item.table === "string" ? item.table : "employees";
+        if (name !== "leave_entries" || typeof item.record_id !== "string" || !item.profile) throw failed();
+        ledgerRule(item.profile);
+        const all = [...rowsOf(name), ...(staged[name] ??= [])];
+        if (seenIds.has(item.record_id) || all.some((r) => r.id === item.record_id)) throw new Refused(refusal("conflict", "That changed. Refresh before trying again."));
+        // One duplicate key refuses the whole batch: 409 unique_violation, which the board shows as `conflict`.
+        if (duplicateRef(all, item.profile)) throw new Refused(refusal("conflict", "That changed. Refresh before trying again."));
+        seenIds.add(item.record_id);
+        staged[name]!.push({ id: item.record_id, revision: 1, profile: item.profile });
+      }
+      for (const [name, added] of Object.entries(staged)) rowsOf(name).push(...added);
+      return { rows: batch.length };
+    }
+    case "records.aggregate": {
+      const filters = Array.isArray(args.filters) ? (args.filters as { field: string; op: string; value: unknown }[]) : [];
+      const by = Array.isArray(args.group_by) ? (args.group_by as string[]) : [];
+      const sums = Array.isArray(args.sum) ? (args.sum as string[]) : [];
+      const groups = new Map<string, { key: Record<string, unknown>; count: number; sums: Record<string, number> }>();
+      for (const r of rowsOf(table(args)).filter((row) => filters.every((f) => hit(f, row)))) {
+        const key = Object.fromEntries(by.map((c) => [c, r.profile[c] ?? null]));
+        const id = JSON.stringify(key);
+        const g = groups.get(id) ?? { key, count: 0, sums: Object.fromEntries(sums.map((c) => [c, 0])) };
+        g.count += 1;
+        for (const c of sums) g.sums[c]! += Number(r.profile[c] ?? 0);
+        groups.set(id, g);
+      }
+      const all = [...groups.values()];
+      // ?aggregate=truncated shows the screen a cut answer: the host reports groups beyond its limit as `truncated`.
+      return query.get("aggregate") === "truncated" ? { groups: all.slice(0, 2), group_limit: 1000, truncated: true } : { groups: all, group_limit: 1000, truncated: false };
     }
     default: throw new Refused(refusal("forbidden", "This operation is unavailable."));
   }

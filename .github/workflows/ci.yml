@@ -148,13 +148,16 @@ jobs:
       - name: Verify screen and SDK authority boundary
         run: pnpm run verify
 
+      # v0.3.23-beta.1 (pre-release) is the first checker that knows `records.batch` and `records.aggregate`; the
+      # released v0.3.22 refuses a screen that declares them. Move to the first release that carries them.
+      # The v0.3.2 credential-scanner pin above is unchanged: it qualifies the secret-scan API only.
       - name: Check bundle against the current host grammar
         run: |
           set -euo pipefail
           curl --fail --location --retry 3 \
-            https://github.com/favcrm/cadence/releases/download/v0.3.19/cadence-v0.3.19-x86_64-linux.tar.gz \
+            https://github.com/favcrm/cadence/releases/download/v0.3.23-beta.1/cadence-v0.3.23-beta.1-x86_64-linux.tar.gz \
             --output "$RUNNER_TEMP/cadence-check.tgz"
-          printf '%s  %s\n' eb32fa7a16632bf1c782b1f6882a29f098cc41167548ba21b518541e1984626f "$RUNNER_TEMP/cadence-check.tgz" | sha256sum --check
+          printf '%s  %s\n' da9f148b930654fcc3d68e022d6d8cd8fee8fe7667a2e766046a39cd6ff03a2f "$RUNNER_TEMP/cadence-check.tgz" | sha256sum --check
           mkdir -p "$RUNNER_TEMP/cadence-check"
           tar -xzf "$RUNNER_TEMP/cadence-check.tgz" -C "$RUNNER_TEMP/cadence-check"
           BIN=$(dirname "$(find "$RUNNER_TEMP/cadence-check" -name cadence -type f | head -1)")

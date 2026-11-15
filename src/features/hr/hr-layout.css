@@ -78,3 +78,9 @@
 .hr-reasons { margin: 0.4rem 0 0.4rem 1.1rem; padding: 0; list-style: disc; font-size: var(--text-secondary); color: var(--color-ink-200); overflow-wrap: anywhere; }
 .hr-tabs .btn, .hr-subtabs .btn { min-width: 0; }
 @media (max-width: 639px) { .hr-tabs { flex-wrap: nowrap; overflow-x: auto; } .hr-tabs .btn { flex: 0 0 auto; } }
+
+/* The accrual rule editor: one row per step, wrapping on a narrow screen. A balance below zero reads as a warning, not only by colour. */
+.hr-tier { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
+.hr-tier .field { width: 5rem; }
+.hr .num[data-negative="true"] { color: var(--color-warn); }
+.hr .num[data-negative="true"]::before { content: "\26A0\00a0"; }

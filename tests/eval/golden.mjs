@@ -28,6 +28,14 @@ export const leaves = {
   lr04: { kind: "ask", text: "Which Sample Chan do you mean, and which dates?" },
   lr05: leave(e1, { leave_type: "ANNUAL", start_date: "2026-09-01", end_date: "2026-09-01", half_days: 2 }),
 };
+const aggregate = (emp) => ({ verb: "records.aggregate", args: { table: "leave_entries", group_by: ["employee_id", "leave_type"], sum: ["half_days"], filters: [{ field: "employee_id", op: "eq", value: emp.id }, { field: "leave_type", op: "eq", value: "ANNUAL" }] } });
+export const balances = {
+  lb01: { call: aggregate(e1), text: "Ada Sample has 5.5 days of ANNUAL leave, as of 2026-03-09 14:05." },
+  lb02: { call: aggregate(e2), text: "Bo Sample's ANNUAL balance is -1.5 days, as of 2026-03-09 14:06: more leave was taken than has accrued." },
+  lb03: { call: aggregate(e2), text: "No ANNUAL leave has been recorded for Bo Sample yet (read 2026-03-09 14:07)." },
+  lb04: { call: aggregate(e1), text: "The ledger's answer was cut short, so Ada Sample's ANNUAL balance may be missing from it. Open her balances on the Leave tab." },
+  lb05: { call: aggregate(e1), text: "I could not read the leave balance just now. Please try again in a moment." },
+};
 export const claims = {
   rc01: claim(e1, { claim_date: "2026-06-02", merchant: "SAMPLE CAFE", amount_minor: 8650, currency: "HKD", category: "meals" }),
   rc02: claim(e2, { claim_date: "2026-05-28", merchant: "Sample Transit Co.", amount_minor: 2400, currency: "HKD", category: "travel" }),

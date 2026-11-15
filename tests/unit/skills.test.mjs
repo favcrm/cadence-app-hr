@@ -78,3 +78,15 @@ test("the skills carry no policy text, price, credential or script", () => {
   for (const p of Object.keys(files)) expect(p).not.toMatch(/\/scripts\//);
   for (const tag of TAGS) expect(body(tag)).not.toMatch(/HK\$|\bUSD\b|password|api[_-]?key|token/i);
 });
+
+test("leave-desk is true about a staged approval: the host does not refuse it, and it leaves the balance unchanged", () => {
+  const text = body("leave-desk");
+  // The descriptor's rule lets a pending request become approved, so the skill must not claim the host refuses that.
+  const rule = JSON.parse(readFileSync(app + "app-storage.json", "utf8")).tables.leave_requests.write_schema;
+  expect(rule.properties.after.properties.status.enum).toContain("approved");
+  expect(text).not.toMatch(/refuses it anyway/i);
+  expect(text).toMatch(/does not stop a staged approval of a pending request/);
+  expect(text).toMatch(/balance stays unchanged until the owner runs Leave → Balances → "Record earlier approvals"/);
+  expect(text).toMatch(/never stage a `records\.update` that changes a leave request's `status`/);
+  expect(text).toMatch(/send them to the request on the Leave tab/);
+});

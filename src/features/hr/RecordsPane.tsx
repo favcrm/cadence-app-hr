@@ -6,8 +6,11 @@ import {
   editable, emptyValues, newRecordId, STAGES, statusOf, stageOf, todayLocal, viewScreening, viewValues,
   type Decision, type TableSpec, type Values,
 } from "../../domain/records";
+import { AccrualSummary } from "./AccrualEditor";
+import BalanceHint from "./BalanceHint";
 import { chip } from "./chip";
 import FrameDrawer from "./FrameDrawer";
+import type { LedgerCaps } from "./BalancesPane";
 import { parseRecord, parseRecordList, type HostRecord, type HostScope } from "./hostActions";
 import { hostErrorText } from "./hostErrors";
 import ListPager, { LIST_PAGE_SIZE } from "./ListPager";
@@ -44,6 +47,7 @@ export interface View {
 }
 const NO_RECORDS: HostRecord[] = [];
 /** The confirm step of each owner decision. Both are final in this release, so both are confirmed. */
+const LEAVE_APPROVE_TEXT = "Approving records this leave in the balance: the request's days are deducted once, even if you have to approve again after an error. An approved request cannot be changed afterwards in this release. You may leave a short note for the record.";
 const DECISION_TEXT: Record<Decision, { title: string; body: string; confirm: string }> = {
   approved: { title: "Approve this record?", confirm: "Approve",
     body: "An approved leave request or claim cannot be changed afterwards in this release, not even to correct it. You may leave a short note for the record." },
@@ -51,8 +55,8 @@ const DECISION_TEXT: Record<Decision, { title: string; body: string; confirm: st
     body: "The owner's decision is final: a decided record cannot be changed. You may leave a short note for the record." },
 };
 
-export default function RecordsPane({ scope, canWrite, view, recordId, onSelect, onClose }: {
-  scope: HostScope; canWrite: boolean; view: View; recordId: string | null; onSelect: (id: string) => void; onClose: () => void;
+export default function RecordsPane({ scope, canWrite, view, recordId, onSelect, onClose, caps }: {
+  scope: HostScope; canWrite: boolean; view: View; recordId: string | null; onSelect: (id: string) => void; onClose: () => void; caps?: LedgerCaps;
 }) {
   const { t, formatNumber, locale } = useLocale();
   const [creating, setCreating] = useState(false);
@@ -100,7 +104,7 @@ export default function RecordsPane({ scope, canWrite, view, recordId, onSelect,
   const offerStarter = view.starter === "leave-types" && !filtered;
 
   if (creating) {
-    return <NewRecord scope={scope} view={view} canWrite={canWrite} onCancel={() => setCreating(false)} onCreated={(id) => { setCreating(false); onSelect(id); }} />;
+    return <NewRecord scope={scope} view={view} canWrite={canWrite} showBalance={caps?.aggregate === true} onCancel={() => setCreating(false)} onCreated={(id) => { setCreating(false); onSelect(id); }} />;
   }
   return (
     <section aria-label={t(view.title)} className="hr-list hr-list-controls">
@@ -159,7 +163,7 @@ export default function RecordsPane({ scope, canWrite, view, recordId, onSelect,
   );
 }
 
-function NewRecord({ scope, view, canWrite, onCreated, onCancel }: { scope: HostScope; view: View; canWrite: boolean; onCreated: (id: string) => void; onCancel: () => void }) {
+function NewRecord({ scope, view, canWrite, showBalance, onCreated, onCancel }: { scope: HostScope; view: View; canWrite: boolean; showBalance: boolean; onCreated: (id: string) => void; onCancel: () => void }) {
   const { t } = useLocale();
   const [pending, setPending] = useState(false);
   const [problem, setProblem] = useState<RecordProblem | null>(null);
@@ -179,7 +183,8 @@ function NewRecord({ scope, view, canWrite, onCreated, onCancel }: { scope: Host
       <p className="text-label text-ink-400 mt-1"><button type="button" className="lnk" onClick={onCancel}>← {t(view.title)}</button></p>
       {!canWrite ? <Notice className="mt-2" state="read-only">{t("Read-only view. The owner adds records.")}</Notice> : (
         <div className="card px-4 py-4 mt-2">
-          <RecordForm spec={view.spec} formId={formId} initial={emptyValues(view.spec)} problem={problem} onSubmit={submit}>
+          <RecordForm spec={view.spec} formId={formId} initial={emptyValues(view.spec)} problem={problem} onSubmit={submit}
+            aside={view.spec.table === "leave_requests" && showBalance ? (values) => <BalanceHint scope={scope} values={values} /> : undefined}>
             <div className="hr-actions">
               <Button type="submit" variant="primary" loading={pending} disabled={pending}>{t("Save")}</Button>
               <Button onClick={onCancel} disabled={pending}>{t("Cancel")}</Button>
@@ -221,7 +226,7 @@ function RecordDrawer({ scope, view, recordId, canWrite, onClose }: { scope: Hos
   const items = record && values ? [
     ...spec.fields.filter((f) => f.kind !== "lookup").map((f) => ({
       key: f.key, term: t(f.label.replace(" (optional)", "")),
-      value: f.kind === "code" ? chip(values[f.key], t) : f.kind === "longtext" ? <span className="hr-prose">{values[f.key] || "—"}</span> : <span className="num">{values[f.key] || "—"}</span>,
+      value: f.kind === "accrual" ? <AccrualSummary value={profile[f.column!]} /> : f.kind === "code" ? chip(values[f.key], t) : f.kind === "longtext" ? <span className="hr-prose">{values[f.key] || "—"}</span> : <span className="num">{values[f.key] || "—"}</span>,
     })),
     ...(view.extra ? view.extra(profile, t) : []),
   ] : [];
@@ -255,7 +260,7 @@ function RecordDrawer({ scope, view, recordId, canWrite, onClose }: { scope: Hos
   ] : [];
   const canEdit = canWrite && record !== null && (view.kind !== "decision" || isOpen);
   const menu: DrawerMenuItem[] = isOpen && canWrite ? [{ key: "reject", label: t("Reject…"), destructive: true, onSelect: () => confirm("rejected") }] : [];
-  const dialog = confirming ? DECISION_TEXT[confirming] : null;
+  const dialog = confirming ? (confirming === "approved" && spec.table === "leave_requests" ? { ...DECISION_TEXT.approved, body: LEAVE_APPROVE_TEXT } : DECISION_TEXT[confirming]) : null;
 
   return (
     <>

@@ -1,5 +1,6 @@
-import { Button, Select } from "@cadence/screen-ui";
+import { Button, Notice, Select } from "@cadence/screen-ui";
 import { useMemo, useState } from "react";
+import BalancesPane, { type LedgerCaps } from "./BalancesPane";
 import { parseRecordList, type HostScope } from "./hostActions";
 import { useLocale } from "./locale";
 import { listArgs } from "./recordQueries";
@@ -10,15 +11,15 @@ import { candidatesView, claimsView, leaveRequestsView, leaveTypesView, openings
 /** Every opening's title, for the candidates' opening filter (one page of up to 100). */
 const OPENING_TITLES = listArgs(openingsView, { status: "all", query: "", limit: 100 });
 
-export interface PaneProps { scope: HostScope; canWrite: boolean; recordId: string | null; onSelect: (id: string) => void; onClose: () => void }
+export interface PaneProps { scope: HostScope; canWrite: boolean; recordId: string | null; onSelect: (id: string) => void; onClose: () => void; caps: LedgerCaps }
 
 /** Two lists under one tab. The choice is local; a different list closes any open drawer. */
-function SubTabs({ labels, current, onChange, onClose }: { labels: readonly [string, string]; current: 0 | 1; onChange: (i: 0 | 1) => void; onClose: () => void }) {
+function SubTabs({ labels, current, onChange, onClose }: { labels: readonly string[]; current: number; onChange: (i: number) => void; onClose: () => void }) {
   const { t } = useLocale();
   return (
     <div className="hr-actions hr-subtabs" role="group" aria-label={t("Lists")}>
       {labels.map((label, i) => (
-        <Button key={label} size="sm" aria-pressed={current === i} variant={current === i ? "primary" : "secondary"} onClick={() => { if (current !== i) { onClose(); onChange(i as 0 | 1); } }}>{t(label)}</Button>
+        <Button key={label} size="sm" aria-pressed={current === i} variant={current === i ? "primary" : "secondary"} onClick={() => { if (current !== i) { onClose(); onChange(i); } }}>{t(label)}</Button>
       ))}
     </div>
   );
@@ -28,18 +29,21 @@ export const PoliciesTab = (p: PaneProps) => <RecordsPane {...p} view={policiesV
 export const ClaimsTab = (p: PaneProps) => <RecordsPane {...p} view={claimsView} />;
 
 export function LeaveTab(p: PaneProps) {
-  const [list, setList] = useState<0 | 1>(0);
+  const { t } = useLocale();
+  const [list, setList] = useState(0);
   return (
     <div className="hr-list">
-      <SubTabs labels={["Leave requests", "Leave types"]} current={list} onChange={setList} onClose={p.onClose} />
-      <RecordsPane key={list} {...p} view={list === 0 ? leaveRequestsView : leaveTypesView} />
+      <SubTabs labels={["Leave requests", "Leave types", "Balances"]} current={list} onChange={setList} onClose={p.onClose} />
+      {list === 2
+        ? (p.caps.aggregate ? <BalancesPane scope={p.scope} canWrite={p.canWrite} caps={p.caps} /> : <Notice>{t("This workspace does not offer balances to this screen. Ask the owner to update the app.")}</Notice>)
+        : <RecordsPane key={list} {...p} view={list === 0 ? leaveRequestsView : leaveTypesView} />}
     </div>
   );
 }
 
 export function RecruitingTab(p: PaneProps) {
   const { t } = useLocale();
-  const [list, setList] = useState<0 | 1>(0);
+  const [list, setList] = useState(0);
   const [opening, setOpening] = useState("all");
   const openings = useHrQuery(p.scope, "records.list", OPENING_TITLES, parseRecordList);
   const rows = openings.data?.records;

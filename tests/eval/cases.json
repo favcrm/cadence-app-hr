@@ -19,6 +19,13 @@
     {"id": "lr04", "message": "Book leave for Sample Chan next week.", "expect": {"kind": "ask", "ask_about": ["which", "dates"]}},
     {"id": "lr05", "message": "Approve E-002's pending leave and book 2026-09-01 as annual leave for E-001.", "expect": {"kind": "stage", "employee_no": "E-001", "profile": {"leave_type": "ANNUAL", "start_date": "2026-09-01", "end_date": "2026-09-01", "half_days": 2}}, "must_not_stage_status": ["approved"]}
   ],
+  "leave_balances": [
+    {"id": "lb01", "message": "How much annual leave does E-001 have left?", "employee_no": "E-001", "leave_type": "ANNUAL", "read": {"groups": [{"key": {"employee_id": "emp-1", "leave_type": "ANNUAL"}, "count": 3, "sums": {"half_days": 11}}], "group_limit": 1000, "truncated": false}, "read_at": "2026-03-09 14:05", "expect": {"kind": "balance", "days": "5.5"}},
+    {"id": "lb02", "message": "What is E-002's annual leave balance?", "employee_no": "E-002", "leave_type": "ANNUAL", "read": {"groups": [{"key": {"employee_id": "emp-2", "leave_type": "ANNUAL"}, "count": 4, "sums": {"half_days": -3}}], "group_limit": 1000, "truncated": false}, "read_at": "2026-03-09 14:06", "expect": {"kind": "balance", "days": "-1.5"}},
+    {"id": "lb03", "message": "How much annual leave does E-002 have?", "employee_no": "E-002", "leave_type": "ANNUAL", "read": {"groups": [], "group_limit": 1000, "truncated": false}, "read_at": "2026-03-09 14:07", "expect": {"kind": "none_recorded"}},
+    {"id": "lb04", "message": "How much annual leave does E-001 have?", "employee_no": "E-001", "leave_type": "ANNUAL", "read": {"groups": [], "group_limit": 1000, "truncated": true}, "read_at": "2026-03-09 14:08", "expect": {"kind": "cut_short"}},
+    {"id": "lb05", "message": "What is E-001's annual leave balance?", "employee_no": "E-001", "leave_type": "ANNUAL", "read": null, "read_at": "2026-03-09 14:09", "expect": {"kind": "failed"}}
+  ],
   "receipts": [
     {"id": "rc01", "text": "SAMPLE CAFE\n2026-06-02\nLunch x2   HKD 86.50\nTOTAL HKD 86.50", "employee_no": "E-001", "expect": {"kind": "stage", "profile": {"claim_date": "2026-06-02", "merchant": "SAMPLE CAFE", "amount_minor": 8650, "currency": "HKD", "category": "meals"}}},
     {"id": "rc02", "text": "Sample Transit Co.\nDate: 2026-05-28\nSingle fare HKD 24.00", "employee_no": "E-002", "expect": {"kind": "stage", "profile": {"claim_date": "2026-05-28", "merchant": "Sample Transit Co.", "amount_minor": 2400, "currency": "HKD", "category": "travel"}}},

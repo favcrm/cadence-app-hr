@@ -24,14 +24,44 @@ export function parseRecordList(value: unknown): ListReceipt {
   };
 }
 
+/** One aggregate group: the host's grouped count and integer sums. `key` holds only the columns grouped by. */
+export interface AggregateGroup { key: Record<string, string | number | boolean | null>; count: number; sums: Record<string, number> }
+export interface AggregateReceipt { groups: AggregateGroup[]; truncated: boolean; groupLimit: number | null }
+
+/** The host's `records.aggregate` answer, read strictly: a malformed group or sum is an invalid receipt, never a zero. */
+export function parseAggregate(value: unknown): AggregateReceipt {
+  const body = value as { groups?: unknown; truncated?: unknown; group_limit?: unknown } | null;
+  if (!body || typeof body !== "object" || !Array.isArray(body.groups) || typeof body.truncated !== "boolean") throw invalid();
+  const groups = body.groups.map((row): AggregateGroup => {
+    const g = row as { key?: unknown; count?: unknown; sums?: unknown } | null;
+    if (!g || typeof g !== "object" || !g.key || typeof g.key !== "object" || Array.isArray(g.key) || !Number.isSafeInteger(g.count) || (g.count as number) < 0
+      || !g.sums || typeof g.sums !== "object" || Array.isArray(g.sums)) throw invalid();
+    for (const v of Object.values(g.key)) if (v !== null && !["string", "number", "boolean"].includes(typeof v)) throw invalid();
+    for (const v of Object.values(g.sums)) if (!Number.isSafeInteger(v)) throw invalid();
+    return { key: g.key as AggregateGroup["key"], count: g.count as number, sums: g.sums as Record<string, number> };
+  });
+  return { groups, truncated: body.truncated, groupLimit: Number.isSafeInteger(body.group_limit) ? (body.group_limit as number) : null };
+}
+
+export interface AggregateOptions { table?: string; group_by?: string[]; sum?: string[]; filters?: RecordFilter[]; query?: string }
+export interface BatchItem { record_id: string; table?: string; profile: unknown }
 export interface ListOptions { table?: string; query?: string; limit?: number; cursor?: string; filters?: RecordFilter[]; order_by?: { field: string; direction?: "asc" | "desc" } }
 /** The one function the host client needs: send a records verb for a scope. Tests pass a fake. */
-export type CallFn = (scope: HostScope, verb: "records.list" | "records.show" | "records.create" | "records.update", args: never) => Promise<unknown>;
+export type CallFn = (scope: HostScope, verb: "records.list" | "records.show" | "records.create" | "records.update" | "records.batch" | "records.aggregate", args: never) => Promise<unknown>;
 export type HostActions = ReturnType<typeof createHostActions>;
 
 export function createHostActions(call: CallFn) {
   const send = (scope: HostScope, verb: Parameters<CallFn>[1], args: Record<string, unknown>) => call(scope, verb, args as never);
   return {
+    /** Counts and integer sums over a table; the answer says when the host cut it at its group limit. */
+    async aggregate(scope: HostScope, opts: AggregateOptions): Promise<AggregateReceipt> {
+      return parseAggregate(await send(scope, "records.aggregate", { ...opts }));
+    },
+    /** Create 1 to 200 rows in one transaction: all of them or none. A resolved call means every item was written. */
+    async batch(scope: HostScope, items: BatchItem[]): Promise<void> {
+      if (items.length < 1 || items.length > 200 || items.some((item) => !RECORD_ID.test(item.record_id))) throw new ApiError("The batch is out of bounds", 400);
+      await send(scope, "records.batch", { items });
+    },
     async list(scope: HostScope, opts: ListOptions = {}): Promise<ListReceipt> {
       if (opts.query !== undefined && (opts.query.length === 0 || opts.query.length > 120 || /[\u0000-\u001f\u007f]/.test(opts.query))) throw new ApiError("The search text is out of bounds", 400);
       if (opts.limit !== undefined && (!Number.isInteger(opts.limit) || opts.limit < 1 || opts.limit > 100)) throw new ApiError("The page size is out of bounds", 400);

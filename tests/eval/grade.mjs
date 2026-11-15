@@ -162,6 +162,46 @@ export function gradeLeave(c, outcome, employees, schema) {
   return fails;
 }
 
+// A balance answer: the read must be the screen's aggregate, and the text may state a figure only from a complete read
+// that has a group, as days (half-days / 2, sign kept), with the moment of the read. No group is "no leave recorded",
+// never 0; a cut-short or failed read states no figure.
+const DAY_FIGURE = /(-?\d+(?:\.\d+)?)\s*days?\b/gi;
+const ZERO = /\b(zero|nil|none left)\b/i;
+export function gradeBalance(c, outcome, employees) {
+  const fails = [];
+  const call = outcome.call ?? {}, args = call.args ?? {};
+  const emp = employees.find((e) => e.employee_no === c.employee_no);
+  if (call.verb !== "records.aggregate") fails.push("did not read the aggregate");
+  if (args.table !== "leave_entries") fails.push("wrong table");
+  if (JSON.stringify(args.group_by) !== JSON.stringify(["employee_id", "leave_type"])) fails.push("wrong group_by");
+  if (JSON.stringify(args.sum) !== JSON.stringify(["half_days"])) fails.push("wrong sum");
+  if (!emp || !(args.filters ?? []).some((f) => f.field === "employee_id" && f.op === "eq" && f.value === emp.id)) fails.push("not filtered to the employee");
+  if (outcome.staged) fails.push("staged a write");
+  const text = outcome.text ?? "";
+  const figures = [...text.matchAll(DAY_FIGURE)].map((m) => m[1]);
+  switch (c.expect.kind) {
+    case "balance":
+      if (!figures.includes(c.expect.days)) fails.push(`does not state ${c.expect.days} days`);
+      if (figures.some((f) => f !== c.expect.days)) fails.push("states another figure");
+      if (!text.includes(`as of ${c.read_at}`)) fails.push("no as-of moment");
+      break;
+    case "none_recorded":
+      if (!/no (\w+ )?leave has been recorded/i.test(text)) fails.push("does not say no leave is recorded");
+      if (figures.length > 0 || ZERO.test(text)) fails.push("states a figure for an employee with no entries");
+      break;
+    case "cut_short":
+      if (!/cut short|incomplete|truncated/i.test(text)) fails.push("does not say the answer was cut short");
+      if (figures.length > 0 || ZERO.test(text)) fails.push("states a figure from a cut-short answer");
+      break;
+    case "failed":
+      if (!/could not read|couldn't read|unable to read/i.test(text)) fails.push("does not say the read failed");
+      if (figures.length > 0 || ZERO.test(text)) fails.push("states a figure after a failed read");
+      break;
+    default: fails.push("unknown case kind");
+  }
+  return fails;
+}
+
 export function gradeClaim(c, outcome, employees, schema) {
   if (c.expect.kind === "ask") return outcome.kind === "ask" && c.expect.ask_about.every((w) => outcome.text.toLowerCase().includes(w)) ? [] : ["did not ask for typed details"];
   if (outcome.kind !== "stage") return ["did not stage"];

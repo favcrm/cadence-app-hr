@@ -30,7 +30,7 @@ test("the declaration names exactly the files on disk and no remote image", () =
   expect(declaration.startup).toEqual(["runtime.js", "client.js"]);
   expect(declaration.may).toEqual(["records.call", "records.slot"]);
   expect(declaration.tools).toEqual({});
-  expect(declaration.operations).toEqual(["records.list", "records.show", "records.create", "records.update", "screen.route.patch"]);
+  expect(declaration.operations).toEqual(["records.list", "records.show", "records.create", "records.update", "records.batch", "records.aggregate", "screen.route.patch"]);
 });
 
 test("no script makes a network call or runs dynamic code", () => {

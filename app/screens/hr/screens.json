@@ -16,18 +16,18 @@
     {
       "name": "client.js",
       "media_type": "text/javascript",
-      "size": 130901,
-      "sha256": "sha256:9b8fe46670b27e8730493a945055ff1b359d9a9066749acdb21eee84407fdd8f"
+      "size": 172967,
+      "sha256": "sha256:3009ab2709c040d335a8598a27a0414409c908b9677c71972b93fb5dccb6ac2d"
     },
     {
       "name": "hr.css",
       "media_type": "text/css",
-      "size": 27165,
-      "sha256": "sha256:4dc5e397cbea663299b2afe87e701245d65ee4b03a1347ff98511a9d28824219"
+      "size": 27363,
+      "sha256": "sha256:b881d1559d999debd97231fa3e99a676f7ac257be03afa2f06f202207173e236"
     }
   ],
   "provenance": {
-    "source_digest": "sha256:11074b8005d01ea3e1afa27573ffd6a0e86d4b681b8219207bb96e1a7d061fdf",
+    "source_digest": "sha256:5dccc8610b2db64f59d1487c4076ae7c85d9f1713cfc96c88a77b4719081e93b",
     "sdk_digest": "sha256:fd65c974511e63b3996e9fa7e438fb4e39df5f508d11636116ef150fcc123e35",
     "toolchain_digest": "sha256:e21cfc8222db408abe6ba5a482520639d9cf4b96481c19aff4b4246af8a65e42"
   },
@@ -42,6 +42,8 @@
     "records.show",
     "records.create",
     "records.update",
+    "records.batch",
+    "records.aggregate",
     "screen.route.patch"
   ],
   "navigation": {

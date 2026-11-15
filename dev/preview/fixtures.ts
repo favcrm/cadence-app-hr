@@ -41,11 +41,21 @@ export function seedTables(): Record<string, SeedRow[]> {
       row("pol-002", { title: "Meal claims (sample)", category: "claims", language: "en", effective_from: "2026-03-01", status: "current", body: "Sample text. Meals are claimed with a receipt within an invented period." }),
       row("pol-003", { title: "年假（樣本）", category: "leave", language: "zh-HK", effective_from: "2025-01-01", status: "retired", body: "樣本政策內容，只供預覽。" }),
     ],
-    leave_types: [row("lt-001", { code: "ANNUAL", name: "Annual leave", paid: true, accrual_rule: null }), row("lt-002", { code: "UNPAID", name: "Unpaid leave", paid: false, accrual_rule: null })],
+    leave_types: [
+      row("lt-001", { code: "ANNUAL", name: "Annual leave", paid: true, accrual_rule: { v: 1, days_per_year: [{ from_years: 0, days: 7 }, { from_years: 3, days: 8 }] } }),
+      row("lt-002", { code: "UNPAID", name: "Unpaid leave", paid: false, accrual_rule: null }),
+    ],
     leave_requests: [
       row("lv-001", { ...who(0), leave_type: "ANNUAL", start_date: "2026-03-02", end_date: "2026-03-03", half_days: 4, reason: "", status: "pending", decided_on: null, decision_note: null }),
       row("lv-002", { ...who(1), leave_type: "UNPAID", start_date: "2026-04-10", end_date: "2026-04-10", half_days: 1, reason: "Personal", status: "pending", decided_on: null, decision_note: null }),
       row("lv-003", { ...who(2), leave_type: "ANNUAL", start_date: "2026-02-02", end_date: "2026-02-06", half_days: 10, reason: "", status: "approved", decided_on: "2026-01-20", decision_note: null }),
+    ],
+    // Synthetic ledger rows. lv-003 is approved and has no `taken` entry on purpose: it stands for a request approved before 0.3.0.
+    leave_entries: [
+      row("le-seed001", { employee_id: emp[0]!.id, leave_type: "ANNUAL", half_days: 14, kind: "carry_forward", effective_date: "2026-01-01", source_ref: "carry-seed-001", note: "Carried over (sample)" }),
+      row("le-seed002", { employee_id: emp[0]!.id, leave_type: "ANNUAL", half_days: -2, kind: "taken", effective_date: "2026-02-09", source_ref: "taken-lv-seed-001", note: null }),
+      row("le-seed003", { employee_id: emp[1]!.id, leave_type: "ANNUAL", half_days: 3, kind: "adjustment", effective_date: "2026-01-15", source_ref: "adjustment-seed-001", note: "Opening balance (sample)" }),
+      row("le-seed004", { employee_id: emp[3]!.id, leave_type: "ANNUAL", half_days: 1, kind: "accrual", effective_date: "2026-01-31", source_ref: `accrual-${emp[3]!.id}-ANNUAL-2026-01`, note: null }),
     ],
     claims: [
       row("cl-001", { ...who(3), claim_date: "2026-03-02", category: "meals", merchant: "Sample Cafe", amount_minor: 1250, currency: "HKD", description: "Team lunch", receipt_ref: null, status: "submitted", decided_on: null, decision_note: null }),

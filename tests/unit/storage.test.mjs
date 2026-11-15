@@ -25,7 +25,7 @@ const columns = tableOps.flatMap((o) => o.columns);
 // The employees table is created by migration 1; its columns are looked up by name.
 const employeeColumns = migrations[0].body.operations.find((o) => o.op === "create_table" && o.table === "employees").columns;
 const byName = Object.fromEntries(employeeColumns.map((c) => [c.name, c]));
-const REQUIRED_NO_DEFAULT = ["display_name", "employee_no", "employee_id", "employee_name", "leave_type", "start_date", "end_date", "half_days", "claim_date", "amount_minor", "currency", "title", "body", "effective_from", "code", "name", "paid", "opening_id"];
+const REQUIRED_NO_DEFAULT = ["display_name", "employee_no", "employee_id", "employee_name", "leave_type", "start_date", "end_date", "half_days", "claim_date", "amount_minor", "currency", "title", "body", "effective_from", "code", "name", "paid", "opening_id", "kind", "effective_date", "source_ref"];
 
 test("every migration file's sha256 equals its pin and migrations are contiguous from 1", () => {
   expect(descriptor.migrations.length).toBe(descriptor.schema_version);
@@ -43,6 +43,47 @@ test("migration 001 is byte-identical to the 0.1.0 release", () => {
   // The host has no alter operation: a released migration never changes.
   expect(createHash("sha256").update(bytes("app/storage/001-initial.json")).digest("hex")).toBe("e90022e7a06babd0b69ffec315fa7637ae17d2cbf881c10d72a0b216b69da7f1");
 });
+
+test("migration 002 is byte-identical to the 0.2.x release, and 001 and 002 are never edited", () => {
+  // 0.2.x storage is permanent: a released migration, and every column in it, is read-only from 0.3.0 on.
+  expect(createHash("sha256").update(bytes("app/storage/002-hr-records.json")).digest("hex")).toBe("3e9227727792d7ae3bda0d7b523fbd0ca95eebac15f93053a711e5496451318b");
+  expect(descriptor.migrations[0].sha256).toBe("sha256:e90022e7a06babd0b69ffec315fa7637ae17d2cbf881c10d72a0b216b69da7f1");
+  expect(descriptor.migrations[1].sha256).toBe("sha256:3e9227727792d7ae3bda0d7b523fbd0ca95eebac15f93053a711e5496451318b");
+  // 0.3.0 adds one migration and no operation on an older table.
+  expect(descriptor.schema_version).toBe(3);
+  expect(descriptor.compatible_schema_versions).toEqual([3]);
+  expect(descriptor.migrations[2]).toMatchObject({ version: 3, path: "storage/003-leave-ledger.json" });
+  for (const op of migrations[2].body.operations) expect(op.table).toBe("leave_entries");
+});
+
+test("003 creates the append-only ledger: its columns, a unique source_ref, owner-only reads, and no backfill anywhere", () => {
+  const ops = migrations[2].body.operations;
+  expect(ops.map((o) => o.op)).toEqual(["create_table", "create_index", "create_index"]);
+  const table = ops[0];
+  expect(table.table).toBe("leave_entries");
+  expect(table.columns.map((c) => c.name)).toEqual(["employee_id", "leave_type", "half_days", "kind", "effective_date", "source_ref", "note"]);
+  const col = Object.fromEntries(table.columns.map((c) => [c.name, c]));
+  expect(col.half_days.type).toBe("integer");
+  expect(col.half_days.json_schema.minimum).toBeLessThan(0);
+  expect(col.half_days.json_schema.maximum).toBeGreaterThan(0);
+  expect(col.note.nullable).toBe(true);
+  for (const name of ["employee_id", "leave_type", "half_days", "kind", "effective_date", "source_ref"]) expect(col[name].nullable).toBe(false);
+  expect(col.effective_date.json_schema.pattern).toBe("^[0-9-]{10}$");
+  expect(col.leave_type.json_schema.pattern).toBe(byLeaveType().json_schema.pattern);
+  // A refusal host-side needs the column rule to admit the longest source_ref the screen writes.
+  expect(col.source_ref.max_length).toBeGreaterThanOrEqual(8 + 128 + 1 + 32 + 1 + 7);
+  expect(col.source_ref.json_schema.pattern).toBe(`^[A-Za-z0-9_-]{1,${col.source_ref.max_length}}$`);
+  expect(ops[1]).toEqual({ op: "create_index", table: "leave_entries", name: "leave_entries_source_ref", columns: ["source_ref"], unique: true });
+  expect(descriptor.tables.leave_entries).toMatchObject({ append_only: true, read_role: "owner" });
+  expect(descriptor.tables.leave_entries.write_schema).toBeDefined();
+  // The host refuses a migration that backfills an append-only table, a locked one or a balanced column.
+  const protectedTables = Object.entries(descriptor.tables).filter(([, o]) => o.append_only || o.lock || o.balanced).map(([name]) => name);
+  for (const m of migrations) for (const op of m.body.operations) if (op.op === "backfill") expect(protectedTables).not.toContain(op.table);
+  expect(migrations.flatMap((m) => m.body.operations).filter((op) => op.op === "backfill")).toEqual([]);
+  // No pay, identity or medical column came with the ledger.
+  for (const c of table.columns) expect(c.name).not.toMatch(/salary|pay|hkid|identity|passport|bank|account|medical|health|mpf/);
+});
+const byLeaveType = () => migrations[1].body.operations.find((o) => o.op === "create_table" && o.table === "leave_requests").columns.find((c) => c.name === "leave_type");
 
 test("the descriptor satisfies the host's descriptor rules", () => {
   expect(Object.keys(descriptor).sort()).toEqual(["app", "compatible_schema_versions", "contract", "default_table", "migrations", "record_kind", "record_search_columns", "schema_version", "tables"]);
