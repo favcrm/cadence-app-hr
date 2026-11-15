@@ -243,11 +243,14 @@ test("the manifest names app hr at the package version and requires the four con
   expect(json("app/app-chat.json").contexts[0].prompts.length).toBe(3);
 });
 
-test("0.5.0 adds 005 (punches) and 006 (staff self-service), touches no older table, and 001-004 are the released bytes", () => {
-  expect(descriptor.schema_version).toBe(6);
-  expect(descriptor.compatible_schema_versions).toEqual([6]);
+test("0.5.0 adds 005 (punches), 006 (staff self-service) and 007 (the owner's link confirmation), and 001-004 are the released bytes", () => {
+  expect(descriptor.schema_version).toBe(7);
+  expect(descriptor.compatible_schema_versions).toEqual([7]);
   expect(createHash("sha256").update(bytes("app/storage/004-payroll.json")).digest("hex")).toBe("c556a4f2cd1a94fc308fa94c732b57875cac58def8cb33b7ca4a22fdf823610c");
-  expect(descriptor.migrations.slice(4).map((m) => [m.version, m.path])).toEqual([[5, "storage/005-attendance.json"], [6, "storage/006-self-service.json"]]);
+  expect(descriptor.migrations.slice(4).map((m) => [m.version, m.path])).toEqual([[5, "storage/005-attendance.json"], [6, "storage/006-self-service.json"], [7, "storage/007-link-confirmation.json"]]);
+  // 007 adds one nullable column to the owner-only employee record, shaped like `member_id`; no backfill.
+  expect(migrations[6].body.operations).toEqual([{ op: "add_column", table: "employees", column: { name: "confirmed_member_id", type: "text", nullable: true, max_length: 128, json_schema: byName.member_id.json_schema } }]);
+  expect(descriptor.tables.employees.row_owner).toBeUndefined();
   const created = (i) => migrations[i].body.operations.filter((o) => o.op === "create_table").map((o) => o.table);
   expect(created(4)).toEqual(["attendance_punches"]);
   expect(created(5)).toEqual(["staff_link_requests", "staff_snapshots", "staff_leave_requests", "staff_claims", "leave_withdrawals"]);

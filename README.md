@@ -235,7 +235,8 @@ preview (three tabs, balance from the ledger, time-only clock, withdraw a pendin
   backfill of it on a populated table is refused). So 006 adds `staff_leave_requests` and `staff_claims` with the same
   columns and the same write rules (filed `pending`/`submitted` with no decision; frozen once decided), plus
   `member_id` and `client_ref`. 001-004 are byte-identical.
-- **Migrations.** `005-attendance.json`: `attendance_punches` (`employee_id`, `member_id`, `at` epoch seconds,
+- **Migrations.** `007-link-confirmation.json` adds the nullable `employees.confirmed_member_id` (the owner's
+  confirmation of a link). `005-attendance.json`: `attendance_punches` (`employee_id`, `member_id`, `at` epoch seconds,
   `direction` in/out, `method` app/import/correction, nullable `lat_e7`, `lng_e7`, `accuracy_m`, `note`, and
   `client_ref`), append-only, unique (`member_id`, `client_ref`). `006-self-service.json`: `staff_link_requests`,
   `staff_snapshots` and `leave_withdrawals` (append-only), `staff_leave_requests` and `staff_claims`. All six are
@@ -254,12 +255,19 @@ preview (three tabs, balance from the ledger, time-only clock, withdraw a pendin
   optional employee number); their screen shows a code from their account id, and People → Staff accounts shows the
   same code. That is a screen choice, not a host rule: a member can craft rows in any of the six tables, and the
   owner's checks (the linked-account match at approval, the flags in the staff lists and on punches) are the control.
-  Linking writes the account id to the employee record's `member_id` (owner-only), then a `staff_snapshots` row. A link
-  counts only when both hold: the record names the account, and the newest snapshot the owner's screen published for
-  that account names the employee. A `member_id` set before 0.5.0 (or by an edit outside Staff accounts) is listed as
-  "Needs confirmation": it is not a link, nothing is published to it, imports and corrections are not stamped with it,
-  and its rows are not approved, until the owner checks the code and confirms. One account per employee, one employee
-  per account. Unlink clears the record and publishes "not linked".
+  Linking writes the account id to the employee record's `member_id` and `confirmed_member_id` in one update (both on
+  the owner-only record; `confirmed_member_id` is migration `007-link-confirmation.json`), then a `staff_snapshots`
+  row. A link counts only when `confirmed_member_id` equals `member_id`; no member-writable table is read to decide
+  it, so a member cannot forge one. A `member_id` set before 0.5.0 (or by an edit outside Staff accounts) has no
+  confirmation and is listed as "Needs confirmation": it is not a link, nothing is published to it, imports and
+  corrections are not stamped with it, and its rows are not approved, until the owner checks the code and confirms.
+  One account per employee, one employee per account. Unlink clears both columns and publishes "not linked".
+- **Owner screens never scan a member-writable table.** A member can file 5,000 rows in each staff table. Staff
+  accounts lists accounts from the host's aggregate grouped by `member_id` (one row per account, at most 100 shown,
+  with a note when there are more) and reads each account's newest request with a filter on that account. Import
+  look-ups filter on the line's account and its references. Snapshots are read only by their own member. The staff
+  lists page through the host's own paging. A flooding account fills only its own views and one row of Staff
+  accounts; tested with 5,000 rows in each table.
 - **What a linked account can read.** Its own rows in the six tables, including the owner's decision notes, correction
   notes on its punches, imported punches and every snapshot published to it, with a crafted read as well as in the
   staff view. After unlinking it keeps reading what was already published to it. The note fields and Staff accounts
@@ -301,6 +309,8 @@ preview (three tabs, balance from the ledger, time-only clock, withdraw a pendin
   entries are not shown.
 - **Skills.** `attendance-review` summarises missing punches and late arrivals (against a start time the owner gives)
   and never writes. `leave-desk` and `claim-intake` read the staff tables too and never stage into them.
+- **Snapshot growth.** Every publish is a new snapshot row: one per member on each link, decision and "Update staff
+  balances". The table counts toward the 100,000-row cap like any other (AOS-593 tracks a host way to prune it).
 - **Known limits.** No yearly archive: the host has no delete or archive verb, so punches stay (100,000 rows per table,
   about two years at 50 staff and four punches a day; 5,000 rows per member per table). Owner-entered leave requests
   and claims stay owner-only, so a member's lists show what they filed from their own view. A member's `at` is their

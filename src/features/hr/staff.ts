@@ -128,29 +128,19 @@ export async function requestLink(scope: HostScope, name: string, employeeNo: st
 // ---- the owner: linking and what staff see -----------------------------------------------------------------------
 /**
  * An employee record and its account link. `memberId` is the record's own `member_id`; `linked` is true only when the
- * newest snapshot the owner's screen published for that account names this employee, which happens only when the owner
- * links (or confirms) it in this release's screen. A `member_id` set before 0.5.0, or by an edit outside Staff
- * accounts, stays unconfirmed: it is not a link until the owner confirms it.
+ * record's `confirmed_member_id` (0.5.0, migration 007) equals it. Both columns are on the owner-only employee record,
+ * and only the owner's Link or Confirm in Staff accounts writes the second, so a member cannot forge a link and no
+ * member-writable table is read to decide one. A `member_id` set before 0.5.0, or by an edit outside Staff accounts,
+ * stays unconfirmed: it is not a link until the owner confirms it.
  */
 export interface DirectoryRow { id: string; revision: number; name: string; employeeNo: string; memberId: string | null; linked: boolean }
-/** Every owner-published snapshot, newest first by the host's creation order: the newest per account. A failed read throws. */
-async function newestSnapshots(scope: HostScope, actions: HostActions, memberId?: string): Promise<Map<string, Snapshot>> {
-  const out = new Map<string, Snapshot>();
-  let cursor: string | undefined;
-  for (let page = 0; page < 50; page += 1) {
-    const result = await actions.list(scope, { table: STAFF.snapshots, order_by: NEWEST, limit: 100, ...(memberId ? { filters: [{ field: "member_id", op: "eq", value: memberId }] } : {}), ...(cursor ? { cursor } : {}) });
-    for (const r of result.records) { const m = s(p(r).member_id); if (m !== null && !out.has(m)) { const snap = latestSnapshot([r]); if (snap) out.set(m, snap); } }
-    if (result.nextCursor === null) { if (result.truncated) throw new FormError(null, "The list was too long to read in full. Nothing was changed."); return out; }
-    cursor = result.nextCursor;
-  }
-  throw new FormError(null, "The list was too long to read in full. Nothing was changed.");
-}
+const directoryRow = (r: HostRecord): DirectoryRow => {
+  const memberId = s(p(r).member_id);
+  return { id: r.id, revision: r.revision, name: s(p(r).display_name) ?? "", employeeNo: s(p(r).employee_no) ?? "", memberId, linked: memberId !== null && memberId !== "" && s(p(r).confirmed_member_id) === memberId };
+};
+/** The employee records (owner-only). No member-writable table is read. */
 export async function readDirectory(scope: HostScope, actions: HostActions = hostActions): Promise<DirectoryRow[]> {
-  const [rows, snaps] = await Promise.all([listAll(scope, undefined, [], actions), newestSnapshots(scope, actions)]);
-  return rows.map((r) => {
-    const memberId = s(p(r).member_id);
-    return { id: r.id, revision: r.revision, name: s(p(r).display_name) ?? "", employeeNo: s(p(r).employee_no) ?? "", memberId, linked: memberId !== null && snaps.get(memberId)?.employeeId === r.id };
-  });
+  return (await listAll(scope, undefined, [], actions)).map(directoryRow);
 }
 /** The account a staff row counts for: the employee record's own, and only once the owner confirmed the link. */
 export const linkedAccount = (e: DirectoryRow | undefined | null): string | null => (e && e.linked ? e.memberId : null);
@@ -198,25 +188,37 @@ export async function publishAllSnapshots(scope: HostScope, now: number, actions
   return items.length;
 }
 /**
- * One account on People → Staff accounts: a link request, or an employee record that names an account the owner has
- * not confirmed (set before 0.5.0 or outside this screen). `linkedTo` is the employee whose record names the account;
- * `confirmed` says whether that link counts.
+ * One account on People → Staff accounts: an account that asked to be linked, or an employee record that names an
+ * account the owner has not confirmed (set before 0.5.0 or outside this screen). `linkedTo` is the employee whose record
+ * names the account; `confirmed` says whether that link counts. `requests` counts the account's link requests.
  */
-export interface LinkRequestRow { id: string; memberId: string; name: string; employeeNo: string | null; requestedAt: number | null; linkedTo: DirectoryRow | null; confirmed: boolean }
-export async function readLinkRequests(scope: HostScope, actions: HostActions = hostActions): Promise<{ requests: LinkRequestRow[]; directory: DirectoryRow[] }> {
-  const [rows, directory] = await Promise.all([listAll(scope, STAFF.links, [], actions), readDirectory(scope, actions)]);
-  const requests = rows.flatMap((r): LinkRequestRow[] => {
-    const memberId = s(p(r).member_id), name = s(p(r).display_name), at = p(r).requested_at;
-    if (memberId === null || name === null || !Number.isSafeInteger(at)) return [];
-    const to = directory.find((e) => e.memberId === memberId) ?? null;
-    return [{ id: r.id, memberId, name, employeeNo: s(p(r).employee_no), requestedAt: at as number, linkedTo: to, confirmed: to?.linked === true }];
-  }).sort((a, b) => (b.requestedAt ?? 0) - (a.requestedAt ?? 0));
+export interface LinkRequestRow { id: string; memberId: string; name: string; employeeNo: string | null; requestedAt: number | null; requests: number; linkedTo: DirectoryRow | null; confirmed: boolean }
+/** The most accounts Staff accounts reads at once; more is reported, never read as "none". */
+export const MAX_ACCOUNTS = 100;
+/**
+ * Staff accounts, read so that no member can break it: the accounts that asked come from the host's aggregate grouped
+ * by `member_id` (one group per account, however many rows an account filed), and each account's newest request is a
+ * read filtered to that account. A flood of requests from one account is one row here.
+ */
+export async function readLinkRequests(scope: HostScope, actions: HostActions = hostActions): Promise<{ requests: LinkRequestRow[]; directory: DirectoryRow[]; more: boolean }> {
+  const [groups, directory] = await Promise.all([actions.aggregate(scope, { table: STAFF.links, group_by: ["member_id"] }), readDirectory(scope, actions)]);
+  const accounts = groups.groups.flatMap((g) => (typeof g.key.member_id === "string" && g.key.member_id !== "" ? [{ memberId: g.key.member_id, count: g.count }] : []));
+  const more = groups.truncated || accounts.length > MAX_ACCOUNTS;
+  const requests: LinkRequestRow[] = [];
+  for (const account of accounts.slice(0, MAX_ACCOUNTS)) {
+    const page = await actions.list(scope, { table: STAFF.links, filters: [{ field: "member_id", op: "eq", value: account.memberId }], order_by: NEWEST, limit: 1 });
+    const r = page.records[0];
+    const name = r ? s(p(r).display_name) : null, at = r ? p(r).requested_at : null;
+    const to = directory.find((e) => e.memberId === account.memberId) ?? null;
+    requests.push({ id: r?.id ?? `account-${account.memberId}`, memberId: account.memberId, name: name ?? "—", employeeNo: r ? s(p(r).employee_no) : null, requestedAt: Number.isSafeInteger(at) ? (at as number) : null, requests: account.count, linkedTo: to, confirmed: to?.linked === true });
+  }
+  requests.sort((a, b) => (b.requestedAt ?? 0) - (a.requestedAt ?? 0));
   // Accounts named on an employee record with no request: shown so the owner confirms or clears them.
   const asked = new Set(requests.map((r) => r.memberId));
   for (const e of directory) if (e.memberId !== null && !asked.has(e.memberId)) {
-    requests.push({ id: `employee-${e.id}`, memberId: e.memberId, name: e.name, employeeNo: e.employeeNo || null, requestedAt: null, linkedTo: e, confirmed: e.linked });
+    requests.push({ id: `employee-${e.id}`, memberId: e.memberId, name: e.name, employeeNo: e.employeeNo || null, requestedAt: null, requests: 0, linkedTo: e, confirmed: e.linked });
   }
-  return { requests, directory };
+  return { requests, directory, more };
 }
 /**
  * Link (or confirm) a member to an employee: the employee record (owner-only) is written first; then a snapshot tells
@@ -232,20 +234,21 @@ export async function linkMember(scope: HostScope, memberId: string, employeeNo:
   if (other) throw new FormError("employeeNo", "This account is already linked to another employee. Unlink it there first.");
   if (employee.memberId !== null && employee.memberId !== memberId) throw new FormError("employeeNo", "That employee is already linked to another account. Unlink it first.");
   const current = { ...employee };
-  if (employee.memberId !== memberId) {
-    const saved = await actions.update(scope, employee.id, employee.revision, { member_id: memberId });
-    current.revision = saved.revision; current.memberId = memberId;
+  if (!employee.linked) {
+    // One update writes the account and its confirmation together: the link counts from this write on.
+    const saved = await actions.update(scope, employee.id, employee.revision, { member_id: memberId, confirmed_member_id: memberId });
+    current.revision = saved.revision; current.memberId = memberId; current.linked = true;
   }
   await publishSnapshot(scope, memberId, current, now, actions);
   return current;
 }
-/** Unlink: clear the employee record's account, then tell the member they are no longer linked. */
+/** Unlink: clear the employee record's account and its confirmation, then tell the member they are no longer linked. */
 export async function unlinkEmployee(scope: HostScope, employee: DirectoryRow, now: number, actions: HostActions = hostActions): Promise<void> {
   if (employee.memberId === null) return;
   const fresh = await actions.show(scope, employee.id);
   const memberId = s(p(fresh).member_id);
   if (memberId === null) return;
-  await actions.update(scope, fresh.id, fresh.revision, { member_id: null });
+  await actions.update(scope, fresh.id, fresh.revision, { member_id: null, confirmed_member_id: null });
   await publishSnapshot(scope, memberId, null, now, actions);
 }
 
@@ -254,7 +257,7 @@ const NOT_FROM_LINKED_TEXT = "This was not filed from the account linked to this
 const WITHDRAWN_TEXT = "The employee withdrew this request, so it cannot be approved. Reject it to close it as withdrawn.";
 /**
  * The employee a staff row names must be linked to the account that filed it: the owner-only employee record names
- * that account, and the owner confirmed the link (the newest snapshot for the account names this employee).
+ * that account and carries the owner's confirmation of it (`confirmed_member_id`).
  */
 async function assertFiledByLinked(scope: HostScope, record: HostRecord, actions: HostActions): Promise<string> {
   const employeeId = s(p(record).employee_id), memberId = s(p(record).member_id);
@@ -264,8 +267,7 @@ async function assertFiledByLinked(scope: HostScope, record: HostRecord, actions
     if (error instanceof ApiError && error.status === 404) throw new FormError(null, NOT_FROM_LINKED_TEXT);
     throw error;
   }
-  if (s(p(employee).member_id) !== memberId) throw new FormError(null, NOT_FROM_LINKED_TEXT);
-  if ((await newestSnapshots(scope, actions, memberId)).get(memberId)?.employeeId !== employeeId) throw new FormError(null, NOT_FROM_LINKED_TEXT);
+  if (linkedAccount(directoryRow(employee)) !== memberId) throw new FormError(null, NOT_FROM_LINKED_TEXT);
   return employeeId;
 }
 /**
@@ -314,13 +316,21 @@ export async function readPunches(scope: HostScope, from: number, actions: HostA
 }
 /** An import or correction is stamped with the employee's account only when the link is confirmed; otherwise with `-`. */
 const directoryMap = (rows: DirectoryRow[]) => new Map<string, DirectoryEntry>(rows.filter((e) => e.employeeNo !== "").map((e) => [e.employeeNo, { id: e.id, memberId: linkedAccount(e) }]));
-/** Which of these punch ids are stored, 50 at a time (the `in` filter's limit). A failed read throws. */
-async function storedPunches(scope: HostScope, ids: string[], actions: HostActions): Promise<Set<string>> {
+/**
+ * Which of these import ids are stored as the owner's own rows, asked per account the line is stamped with and 50 ids
+ * at a time. Filtering on `member_id` keeps the answer bounded: (`member_id`, `client_ref`) is unique, so at most one
+ * row per id can match, and another account's rows under the same reference never count. A failed read throws.
+ */
+async function storedPunches(scope: HostScope, items: readonly { id: string; memberId: string }[], actions: HostActions): Promise<Set<string>> {
   const present = new Set<string>();
-  for (let i = 0; i < ids.length; i += 50) {
-    const page = await actions.list(scope, { table: STAFF.punches, filters: [{ field: "client_ref", op: "in", value: ids.slice(i, i + 50) }], limit: 100 });
-    if (page.nextCursor !== null || page.truncated) throw new FormError(null, "The list was too long to read in full. Nothing was changed.");
-    for (const r of page.records) { const ref = s(p(r).client_ref); if (ref !== null && ref === r.id) present.add(ref); }
+  const byMember = new Map<string, string[]>();
+  for (const i of items) byMember.set(i.memberId, [...(byMember.get(i.memberId) ?? []), i.id]);
+  for (const [memberId, ids] of byMember) {
+    for (let i = 0; i < ids.length; i += 50) {
+      const page = await actions.list(scope, { table: STAFF.punches, filters: [{ field: "member_id", op: "eq", value: memberId }, { field: "client_ref", op: "in", value: ids.slice(i, i + 50) }], limit: 100 });
+      if (page.nextCursor !== null || page.truncated) throw new FormError(null, "The list was too long to read in full. Nothing was changed.");
+      for (const r of page.records) { const ref = s(p(r).client_ref); if (ref !== null && ref === r.id) present.add(ref); }
+    }
   }
   return present;
 }
@@ -328,7 +338,7 @@ async function storedPunches(scope: HostScope, ids: string[], actions: HostActio
 export async function previewImport(scope: HostScope, text: string, actions: HostActions = hostActions): Promise<ImportLine[]> {
   const directory = directoryMap(await readDirectory(scope, actions));
   const first = parsePunchCsv(text, directory);
-  const ids = first.flatMap((l) => (l.status === "new" && l.recordId ? [l.recordId] : []));
+  const ids = first.flatMap((l) => (l.status === "new" && l.recordId ? [{ id: l.recordId, memberId: l.memberId ?? NO_MEMBER }] : []));
   return parsePunchCsv(text, directory, await storedPunches(scope, ids, actions));
 }
 export interface ImportResult { imported: number; alreadyThere: number; blocked: ImportLine[] }
@@ -349,14 +359,14 @@ export async function importPunches(scope: HostScope, lines: readonly ImportLine
       await actions.batch(scope, chunk);
       result.imported += chunk.length;
     } catch {
-      const present = await storedPunches(scope, chunk.map((i) => i.record_id), actions);
+      const present = await storedPunches(scope, chunk.map((i) => ({ id: i.record_id, memberId: i.profile.member_id })), actions);
       result.alreadyThere += present.size;
       for (const one of chunk.filter((i) => !present.has(i.record_id))) {
         try {
           await actions.create(scope, one.record_id, one.profile, STAFF.punches);
           result.imported += 1;
         } catch {
-          if ((await storedPunches(scope, [one.record_id], actions)).size > 0) result.alreadyThere += 1;
+          if ((await storedPunches(scope, [{ id: one.record_id, memberId: one.profile.member_id }], actions)).size > 0) result.alreadyThere += 1;
           else result.blocked.push(byId.get(one.record_id)!);
         }
       }

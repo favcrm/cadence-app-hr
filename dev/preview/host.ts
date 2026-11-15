@@ -145,7 +145,7 @@ function call(verb: string, args: Record<string, unknown>): unknown {
       const id = String(args.record_id);
       const rows = rowsOf(table(args));
       if (rows.some((r) => r.id === id)) throw new Refused(refusal("conflict", "That changed. Refresh before trying again."));
-      const profile = { ...(table(args) === "employees" ? { member_id: null, manager_id: null } : {}), ...(args.profile as Record<string, SeedRow["profile"][string]>) } as SeedRow["profile"];
+      const profile = { ...(table(args) === "employees" ? { member_id: null, confirmed_member_id: null, manager_id: null } : {}), ...(args.profile as Record<string, SeedRow["profile"][string]>) } as SeedRow["profile"];
       // The write rule the descriptor declares: a staged create can only be open.
       if (OPEN[table(args)] && profile.status !== undefined && profile.status !== OPEN[table(args)]) throw new Refused(refusal("failed", "Cadence refused this request. Inspect fresh status before retrying an effect."));
       if (OPEN[table(args)]) profile.status = OPEN[table(args)]!;

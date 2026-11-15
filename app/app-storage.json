@@ -2,9 +2,9 @@
   "contract": "app-storage/v1",
   "app": "hr",
   "record_kind": "employee",
-  "schema_version": 6,
+  "schema_version": 7,
   "compatible_schema_versions": [
-    6
+    7
   ],
   "default_table": "employees",
   "migrations": [
@@ -37,6 +37,11 @@
       "version": 6,
       "path": "storage/006-self-service.json",
       "sha256": "sha256:4d593f7de6776c632ab5e77f3ac51ac50db39473f3c44bd4aefc4876bd70831c"
+    },
+    {
+      "version": 7,
+      "path": "storage/007-link-confirmation.json",
+      "sha256": "sha256:83e77c9a9e12d0838bfd64f2baf656d96ea545a629b5571ea6e11989374ce796"
     }
   ],
   "record_search_columns": [

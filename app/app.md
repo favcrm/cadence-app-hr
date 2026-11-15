@@ -58,12 +58,13 @@ approvals and every write.
 
 ## Data
 
-`app-storage.json` declares `app-storage/v1` at `schema_version` 6 with six migrations pinned by sha256:
+`app-storage.json` declares `app-storage/v1` at `schema_version` 7 with seven migrations pinned by sha256:
 `storage/001-initial.json` (`employees`, unchanged from 0.1.0), `storage/002-hr-records.json` (the six 0.2.0
 tables), `storage/003-leave-ledger.json` (`leave_entries`) and `storage/004-payroll.json` (`rate_tables`, `salaries`,
 `payroll_runs`, `payroll_lines`, `postings`), `storage/005-attendance.json` (`attendance_punches`) and
 `storage/006-self-service.json` (`staff_link_requests`, `staff_snapshots`, `staff_leave_requests`, `staff_claims`,
-`leave_withdrawals`). The six 0.5.0 tables declare `row_owner: member_id` (below). Its `tables` map makes every table owner-only and gives
+`leave_withdrawals`) and `storage/007-link-confirmation.json` (the nullable `employees.confirmed_member_id`). The six
+0.5.0 tables declare `row_owner: member_id` (below). Its `tables` map makes every table owner-only and gives
 `leave_requests` and `claims` a write rule: a staged create can only be open, and a decided request or claim cannot
 change, which freezes an approved claim's amount. Money is an integer in minor units with a currency; leave is an integer number of half days. Dates are
 text holding `YYYY-MM-DD`.
@@ -128,9 +129,10 @@ skill read that same aggregate.
 - **Linking.** A member's view starts unlinked and offers only a link request (`staff_link_requests`: the name they
   give, an optional employee number, and a code from their account id); that is a screen choice, and the owner's
   checks are the control. The owner checks the code and links them on People → Staff accounts, which writes the
-  account id to the employee record's `member_id` and then a `staff_snapshots` row (`snap-` id) naming the employee and
-  the member's leave balances. A link counts only when the newest such snapshot for the account names the employee; a
-  `member_id` set before 0.5.0 needs the owner's confirmation first. A linked account can read the owner's notes on its
+  account id to the employee record's `member_id` and `confirmed_member_id` (both owner-only) and then a
+  `staff_snapshots` row (`snap-` id) naming the employee and the member's leave balances. A link counts only when the
+  two columns are equal; a `member_id` set before 0.5.0 needs the owner's confirmation first. Owner screens never scan
+  a member-writable table: Staff accounts groups requests by account with the host's aggregate. A linked account can read the owner's notes on its
   own rows, and keeps what was published to it after unlinking.
 - **Balances.** Members cannot read `leave_entries`. The owner's screen publishes each linked member's balances as a
   snapshot from the same `records.aggregate` the Balances tab reads, on linking, after deciding that member's leave

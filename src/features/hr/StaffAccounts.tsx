@@ -48,6 +48,7 @@ export default function StaffAccounts({ scope, canWrite, canBatch, onBack }: { s
       {problem && <ErrorNotice>{problem}</ErrorNotice>}
       {data.loading && <Loading>{t("Reading staff accounts…")}</Loading>}
       {data.error !== null && !data.loading && <ErrorNotice onRetry={refresh}>{t(hostErrorText(data.failure, "The staff accounts could not be read."))}</ErrorNotice>}
+      {data.data?.more && <Notice>{t("Only the first 100 accounts that asked are shown. Link or clear some, then reload.")}</Notice>}
       {data.data && rows.length === 0 && <EmptyState name="staff-accounts" title={t("No requests yet")}>{t("When a member of this workspace opens HR and asks to be linked, they appear here.")}</EmptyState>}
       {rows.length > 0 && (
         <DataTable<LinkRequestRow>

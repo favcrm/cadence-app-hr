@@ -345,7 +345,10 @@ test("a member_id set on an employee before 0.5.0 is not a link until the owner 
   // Set outside Staff accounts (0.4.0 data, or an edit): the employee record names Eve's account.
   host.of("employees").find((e) => e.id === "emp-amy")!.profile.member_id = EVE;
   const before = (await S.readDirectory(scope, owner)).find((e) => e.id === "emp-amy")!;
+  // A snapshot Eve forges for that employee is not a confirmation: the link lives on the owner-only record.
+  await eve.file(scope, { employee_id: "emp-amy", employee_name: "Amy Chan", employee_no: "E001", as_of: NOW, leave: null }, STAFF.snapshots);
   expect(before).toMatchObject({ memberId: EVE, linked: false });
+  expect((await S.readDirectory(scope, owner)).find((e) => e.id === "emp-amy")!.linked).toBe(false);
   expect(S.linkedAccount(before)).toBeNull();
   // Staff accounts lists it for confirmation; Eve's own view still reads as not linked.
   const { requests } = await S.readLinkRequests(scope, owner);
@@ -355,12 +358,13 @@ test("a member_id set on an employee before 0.5.0 is not a link until the owner 
   const forged = await eve.file(scope, { employee_id: "emp-amy", employee_name: "Amy Chan", leave_type: "ANNUAL", start_date: "2026-12-01", end_date: "2026-12-01", half_days: 2, status: "pending", decided_on: null, decision_note: null, client_ref: "slv-pre" }, STAFF.leave);
   await expect(S.decideStaff(scope, STAFF.leave, forged, "approved", "2026-11-16", "", NOW, owner)).rejects.toThrow(/not filed from the account linked/);
   expect(await S.publishAllSnapshots(scope, NOW, owner)).toBe(0);
-  expect(host.of(STAFF.snapshots).length).toBe(0);
+  expect(host.of(STAFF.snapshots).filter((r) => r.id.startsWith("snap-")).length).toBe(0);
   // An import stamps the employee's punches with no account while the link is unconfirmed.
   const lines = await S.previewImport(scope, "E001,2026-11-16 09:00,in", owner);
   expect(lines[0]!.memberId).toBe("-");
   // The owner checks the code and confirms: now it counts.
   await S.linkMember(scope, EVE, "E001", NOW, owner);
+  expect(host.of("employees").find((e) => e.id === "emp-amy")!.profile).toMatchObject({ member_id: EVE, confirmed_member_id: EVE });
   expect((await S.readDirectory(scope, owner)).find((e) => e.id === "emp-amy")!.linked).toBe(true);
   expect((await home(eve))!.employeeId).toBe("emp-amy");
   expect((await S.decideStaff(scope, STAFF.leave, forged, "approved", "2026-11-16", "", NOW, owner)).record.profile.status).toBe("approved");
@@ -410,5 +414,40 @@ test("a member write the board reports as failed is read back: saved if it is th
   host.fault("records.create", new ApiError("boom", 500), { table: STAFF.leave });
   host.fault("records.list", new ApiError("boom", 500), { table: STAFF.leave });
   await expect(S.fileLeave(scope, snap, leaveForm, "slv-000000000011", amy)).rejects.toMatchObject({ status: 400, code: "failed" });
+  expect(host.closed.size).toBe(0);
+});
+
+test("a member who floods every table they can write leaves every owner screen working, and cannot forge a link", async () => {
+  const { host, owner, amy, eve } = await world();
+  const leave = await S.fileLeave(scope, await home(amy), leaveForm, "slv-000000000001", amy);
+  // Eve files 5,000 rows (the per-member cap) in each member table the owner's screens read: snapshots naming Ben,
+  // link requests, and punches under the import references she can predict.
+  const csv = Array.from({ length: 60 }, (_, i) => `E002,2026-11-${String(1 + (i % 28)).padStart(2, "0")} ${String(8 + (i % 10)).padStart(2, "0")}:00,${i % 2 ? "out" : "in"}`).join("\n");
+  const preview = await S.previewImport(scope, csv, owner);
+  for (let i = 0; i < 5000; i += 1) {
+    host.add(STAFF.snapshots, `mem_s${i}`, { member_id: EVE, employee_id: "emp-ben", employee_name: "Ben Lee", employee_no: "E002", as_of: NOW + i, leave: null });
+    host.add(STAFF.links, `mem_l${i}`, { member_id: EVE, display_name: `Flood ${i}`, employee_no: null, requested_at: NOW + i });
+    host.add(STAFF.punches, `mem_p${i}`, { employee_id: "emp-ben", member_id: EVE, at: NOW - i, direction: "in", method: "import", client_ref: preview[i % preview.length]!.recordId! + (i < preview.length ? "" : `-${i}`) });
+  }
+  // People → Staff accounts: Eve is one account, however many rows she filed; Amy and Ben are still listed.
+  const accounts = await S.readLinkRequests(scope, owner);
+  expect(accounts.requests.filter((r) => r.memberId === EVE).map((r) => r.requests)).toEqual([5000]);
+  expect(accounts.requests.filter((r) => r.confirmed).map((r) => r.memberId).sort()).toEqual([AMY, BEN]);
+  // Links are decided on the employee record only: Eve's snapshots naming Ben change nothing.
+  const directory = await S.readDirectory(scope, owner);
+  expect(directory.map((e) => [e.id, S.linkedAccount(e)])).toEqual([["emp-amy", AMY], ["emp-ben", BEN]]);
+  // Update staff balances, a decision with its publish, the import preview and run, a correction and the punch list.
+  expect(await S.publishAllSnapshots(scope, NOW + 9000, owner)).toBe(2);
+  expect((await S.decideStaff(scope, STAFF.leave, leave, "approved", "2026-11-16", "", NOW, owner)).published).toBe(true);
+  const again = await S.previewImport(scope, csv, owner);
+  expect(again.filter((l) => l.status === "new").length).toBe(60); // Eve's rows under the same references are not the owner's imports
+  expect((await S.importPunches(scope, again, undefined, owner)).imported).toBe(60);
+  await S.addCorrection(scope, { employeeNo: "E002", date: "2026-11-16", time: "09:00", direction: "in", note: "Device was down" }, "cor-000000000001", owner);
+  expect((await S.readPunches(scope, NOW - 86400 * 30, owner)).more).toBe(true);
+  // Amy's and Ben's own views still read their own newest snapshot.
+  expect((await home(amy))!.employeeId).toBe("emp-amy");
+  expect((await home(host.as(member(BEN))))!.employeeId).toBe("emp-ben");
+  // Eve's own view reads only her own rows: no owner snapshot names her, so she is not linked, whatever she wrote.
+  expect(await home(eve)).toBeNull();
   expect(host.closed.size).toBe(0);
 });

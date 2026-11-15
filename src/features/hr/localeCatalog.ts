@@ -529,4 +529,5 @@ export const zhHK: Record<string, string> = {
   "The employee's linked account can read this note with its own punches.": "員工連結的帳戶可連同自己的打卡紀錄讀取此說明。",
   "The employee's linked account can read this note with its own request or claim.": "員工連結的帳戶可連同自己的申請或報銷讀取此備註。",
   "Older entries are not shown here. Ask the owner if you need them.": "較舊的紀錄不會在此顯示。如有需要，請聯絡東主。",
+  "Only the first 100 accounts that asked are shown. Link or clear some, then reload.": "只顯示首 100 個已申請的帳戶。請先連結或清除部分帳戶，然後重新載入。",
 };
