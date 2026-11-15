@@ -30,34 +30,52 @@ export default function AttendancePane({ scope, canWrite, canBatch }: { scope: H
 
 function Punches({ scope }: { scope: HostScope }) {
   const { t } = useLocale();
+  const [employee, setEmployee] = useState("all");
   const from = useMemo(() => hkDayStart(Math.floor(Date.now() / 1000)) - (DAYS - 1) * 86400, []);
-  const data = useHrLoader(scope, "punches", { from }, async () => {
-    const [punches, directory] = await Promise.all([readPunches(scope, from), readDirectory(scope)]);
-    return { punches: punches.punches, more: punches.more, directory: new Map(directory.map((e) => [e.id, e])) };
+  const data = useHrLoader(scope, "punches", { from, employee }, async () => {
+    const now = Math.floor(Date.now() / 1000);
+    const [punches, directory] = await Promise.all([readPunches(scope, from, now, employee === "all" ? {} : { employeeId: employee }), readDirectory(scope)]);
+    return { ...punches, directory: new Map(directory.map((e) => [e.id, e])), people: directory };
   });
   const refresh = () => { void data.store.refresh(); };
   const rows = data.data?.punches ?? [];
+  const future = data.data?.future ?? [];
+  const columns = (flagFuture: boolean) => [
+    { key: "who", header: t("Employee"), cell: (r: Punch) => { const e = data.data!.directory.get(r.employeeId); return e ? `${e.name} · ${e.employeeNo}` : "—"; }, cellClassName: "text-ink-100" },
+    { key: "when", header: t("Time"), cell: (r: Punch) => <span className="num">{hkParts(r.at).date} {hkParts(r.at).time}</span>, cellClassName: "hr-nowrap" },
+    { key: "dir", header: t("In or out"), cell: (r: Punch) => t(r.direction === "in" ? "In" : "Out") },
+    { key: "kind", header: t("Source"), cell: (r: Punch) => t(KIND_LABEL[r.kind]) },
+    { key: "check", header: t("Check"), cell: (r: Punch) => {
+      // A staff punch counts only from the account linked to that employee; the owner's own rows are trusted.
+      const linked = linkedAccount(data.data!.directory.get(r.employeeId));
+      return <>
+        {flagFuture && <span className="chip" data-status="rejected">{t("Dated in the future")}</span>}
+        {r.kind === "app" && r.memberId !== linked ? <> <span className="chip" data-status="rejected">{t("Not from this employee's linked account")}</span></> : r.note ? <span className="text-ink-400"> {r.note}</span> : null}
+      </>;
+    } },
+  ];
   return (
     <section aria-label={t("Punches")} className="hr-list">
       <p className="text-label text-ink-400">{t("The last 7 days, newest first, in Hong Kong time. Staff punches record the time only; no location is recorded. A punch is never changed: add a correction instead.")}</p>
+      <div className="hr-toolbar">
+        <label className="text-label text-ink-400" htmlFor="hr-punch-employee">{t("Employee")}</label>
+        <Select id="hr-punch-employee" aria-label={t("Employee")} value={employee} onChange={setEmployee}
+          options={[{ value: "all", label: t("All employees") }, ...(data.data?.people ?? []).map((e) => ({ value: e.id, label: `${e.name} · ${e.employeeNo}` }))]} />
+      </div>
       {data.loading && <Loading>{t("Reading punches…")}</Loading>}
       {data.error !== null && !data.loading && <ErrorNotice onRetry={refresh}>{t(hostErrorText(data.failure, "The punches could not be read."))}</ErrorNotice>}
-      {data.data?.more && <Notice>{t("Only the newest 100 punches are shown. Ask the assistant for a full attendance review of the period.")}</Notice>}
+      {data.data?.more && <Notice>{t("Only the newest 100 punches are shown. Choose one employee, or ask the assistant for a full attendance review of the period.")}</Notice>}
+      {future.length > 0 && (
+        <>
+          <ErrorNotice>{t("These punches are dated in the future, so they are not counted above. A staff punch dated ahead was sent from a wrong clock or a crafted request; check it with the employee.")}{data.data?.moreFuture ? ` ${t("More are not shown.")}` : ""}</ErrorNotice>
+          <DataTable<Punch> label={t("Future-dated punches")} wrapClassName="hr-table-wrap" tableClassName="hr-table" rowKey={(r) => r.id} columns={columns(true)} rows={future} />
+        </>
+      )}
       {data.data && rows.length === 0 && <EmptyState name="punches" title={t("No punches in the last 7 days")}>{t("Staff clock in from their own view of HR, or import punches from an attendance device.")}</EmptyState>}
       {rows.length > 0 && (
         <DataTable<Punch>
           label={t("Punches — scroll horizontally to reach every column")} wrapClassName="hr-table-wrap" tableClassName="hr-table" rowKey={(r) => r.id}
-          columns={[
-            { key: "who", header: t("Employee"), cell: (r) => { const e = data.data!.directory.get(r.employeeId); return e ? `${e.name} · ${e.employeeNo}` : "—"; }, cellClassName: "text-ink-100" },
-            { key: "when", header: t("Time"), cell: (r) => <span className="num">{hkParts(r.at).date} {hkParts(r.at).time}</span>, cellClassName: "hr-nowrap" },
-            { key: "dir", header: t("In or out"), cell: (r) => t(r.direction === "in" ? "In" : "Out") },
-            { key: "kind", header: t("Source"), cell: (r) => t(KIND_LABEL[r.kind]) },
-            { key: "check", header: t("Check"), cell: (r) => {
-              // A staff punch counts only from the account linked to that employee; the owner's own rows are trusted.
-              const linked = linkedAccount(data.data!.directory.get(r.employeeId));
-              return r.kind === "app" && r.memberId !== linked ? <span className="chip" data-status="rejected">{t("Not from this employee's linked account")}</span> : r.note ? <span className="text-ink-400">{r.note}</span> : null;
-            } },
-          ]}
+          columns={columns(false)}
           rows={rows}
         />
       )}

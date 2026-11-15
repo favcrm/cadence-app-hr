@@ -530,4 +530,10 @@ export const zhHK: Record<string, string> = {
   "The employee's linked account can read this note with its own request or claim.": "員工連結的帳戶可連同自己的申請或報銷讀取此備註。",
   "Older entries are not shown here. Ask the owner if you need them.": "較舊的紀錄不會在此顯示。如有需要，請聯絡東主。",
   "Only the first 100 accounts that asked are shown. Link or clear some, then reload.": "只顯示首 100 個已申請的帳戶。請先連結或清除部分帳戶，然後重新載入。",
+  "Dated in the future": "日期在未來",
+  "Only the newest 100 punches are shown. Choose one employee, or ask the assistant for a full attendance review of the period.": "只顯示最新的 100 項打卡紀錄。請選擇一位員工，或詢問助理就該期間作完整考勤檢查。",
+  "These punches are dated in the future, so they are not counted above. A staff punch dated ahead was sent from a wrong clock or a crafted request; check it with the employee.": "以下打卡紀錄的日期在未來，因此不計入上方清單。員工打卡日期超前，表示來自錯誤的時鐘或經過篡改的請求；請與該員工核實。",
+  "More are not shown.": "其餘未有顯示。",
+  "Future-dated punches": "日期在未來的打卡紀錄",
+  "All employees": "所有員工",
 };

@@ -150,6 +150,8 @@ test("attendance-review reads punches exactly, trusts the record id over the met
   expect(text).toMatch(/`imp-\.\.\.` is the owner's device import, `cor-\.\.\.` is the owner's correction/);
   expect(text).toMatch(/Do not trust the `method` column/);
   expect(text).toMatch(/`member_id` equals that employee's `member_id`/);
+  expect(text).toMatch(/\*\*and\*\* that record's `confirmed_member_id`/);
+  expect(text).toMatch(/dated in the future/);
   expect(text).toMatch(/Never say where someone was/);
   expect(text).toMatch(/Never compute pay, overtime, deductions or a penalty/);
   expect(text).toMatch(/following `next_cursor` to the end/);

@@ -270,7 +270,7 @@ test("a row filed under another employee is never approved, and a member's own s
   expect(latestSnapshot((await S.listMine(scope, STAFF.snapshots, {}, eve)).records)).toBeNull();
   // Amy's own punch is trusted as hers; Eve's punch naming Amy's record is shown to the owner as not from the linked account.
   const evePunch = await eve.file(scope, { employee_id: "emp-amy", at: NOW, direction: "in", method: "import", client_ref: "app-forged" }, STAFF.punches);
-  const { punches } = await S.readPunches(scope, NOW - 3600, owner);
+  const { punches } = await S.readPunches(scope, NOW - 3600, NOW, {}, owner);
   const row = punches.find((x) => x.id === evePunch.id)!;
   expect(row.kind).toBe("app"); // its method column says "import"; its host-named id says a member filed it
   const directory = await S.readDirectory(scope, owner);
@@ -443,7 +443,22 @@ test("a member who floods every table they can write leaves every owner screen w
   expect(again.filter((l) => l.status === "new").length).toBe(60); // Eve's rows under the same references are not the owner's imports
   expect((await S.importPunches(scope, again, undefined, owner)).imported).toBe(60);
   await S.addCorrection(scope, { employeeNo: "E002", date: "2026-11-16", time: "09:00", direction: "in", note: "Device was down" }, "cor-000000000001", owner);
-  expect((await S.readPunches(scope, NOW - 86400 * 30, owner)).more).toBe(true);
+  expect((await S.readPunches(scope, NOW - 86400 * 30, NOW, {}, owner)).more).toBe(true);
+  // 100 punches Eve dates in the future cannot hold the newest page: the list stops at now, and they are read apart.
+  for (let i = 0; i < 100; i += 1) host.add(STAFF.punches, `mem_f${i}`, { employee_id: "emp-ben", member_id: EVE, at: NOW + 86400 * 365 + i, direction: "in", method: "app", client_ref: `app-future-${i}` });
+  const listed = await S.readPunches(scope, NOW - 86400 * 30, NOW, {}, owner);
+  expect(listed.punches.every((x) => x.at <= NOW + S.FUTURE_SLACK_S)).toBe(true);
+  expect(listed.punches.length).toBe(100); // Eve's past-dated flood still fills the newest page: the employee filter is the way past it
+  expect(listed.future.length).toBe(20);
+  expect(listed.moreFuture).toBe(true);
+  // Earliest first: the import lines dated after today come before Eve's year-ahead rows; all are flagged, none listed.
+  expect(listed.future.every((x) => x.at > NOW + S.FUTURE_SLACK_S)).toBe(true);
+  expect((await S.readPunches(scope, NOW - 86400 * 30, NOW, { employeeId: "emp-ben" }, owner)).future.length).toBe(20);
+  // One employee's punches, past the flood: Amy's list holds none of Eve's rows.
+  await S.punch(scope, await home(amy), "in", NOW - 3600, "app-000000000077", amy);
+  const amys = await S.readPunches(scope, NOW - 86400 * 30, NOW, { employeeId: "emp-amy" }, owner);
+  expect(amys.punches.map((x) => x.memberId)).toEqual([AMY]);
+  expect(amys.future).toEqual([]);
   // Amy's and Ben's own views still read their own newest snapshot.
   expect((await home(amy))!.employeeId).toBe("emp-amy");
   expect((await home(host.as(member(BEN))))!.employeeId).toBe("emp-ben");

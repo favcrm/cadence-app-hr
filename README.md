@@ -266,7 +266,8 @@ preview (three tabs, balance from the ledger, time-only clock, withdraw a pendin
   accounts lists accounts from the host's aggregate grouped by `member_id` (one row per account, at most 100 shown,
   with a note when there are more) and reads each account's newest request with a filter on that account. Import
   look-ups filter on the line's account and its references. Snapshots are read only by their own member. The staff
-  lists page through the host's own paging. A flooding account fills only its own views and one row of Staff
+  lists page through the host's own paging. The Attendance list reads punches up to now plus five minutes (newest
+  100, with an employee filter); punches dated later are shown apart, flagged "Dated in the future", and not counted. A flooding account fills only its own views and one row of Staff
   accounts; tested with 5,000 rows in each table.
 - **What a linked account can read.** Its own rows in the six tables, including the owner's decision notes, correction
   notes on its punches, imported punches and every snapshot published to it, with a crafted read as well as in the

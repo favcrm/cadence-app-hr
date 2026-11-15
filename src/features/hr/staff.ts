@@ -309,10 +309,21 @@ export async function decideStaff(scope: HostScope, table: string, record: HostR
 }
 
 // ---- the owner: attendance ------------------------------------------------------------------------------------------
-/** The newest 100 punches since `from`; `more` says the page was cut (the list shows so instead of implying it is all). */
-export async function readPunches(scope: HostScope, from: number, actions: HostActions = hostActions): Promise<{ punches: Punch[]; more: boolean }> {
-  const page = await actions.list(scope, { table: STAFF.punches, filters: [{ field: "at", op: "gte", value: from }], order_by: { field: "at", direction: "desc" }, limit: 100 });
-  return { punches: page.records.flatMap((r) => { const x = readPunch(r); return x ? [x] : []; }), more: page.nextCursor !== null || page.truncated };
+/** Punches dated more than this after the read are not shown with the rest: a device clock or a crafted call set them. */
+export const FUTURE_SLACK_S = 300;
+/**
+ * The owner's punch list: punches from `from` up to `now` plus a few minutes, newest first, 100 a page, optionally for
+ * one employee. The upper bound keeps future-dated rows (which a member can file) from holding the newest page; those
+ * are read separately, at most 20, so the screen can show them flagged. `more` says the page was cut.
+ */
+export async function readPunches(scope: HostScope, from: number, now: number, opts: { employeeId?: string } = {}, actions: HostActions = hostActions): Promise<{ punches: Punch[]; more: boolean; future: Punch[]; moreFuture: boolean }> {
+  const who = opts.employeeId ? [{ field: "employee_id", op: "eq" as const, value: opts.employeeId }] : [];
+  const read = (r: HostRecord) => { const x = readPunch(r); return x ? [x] : []; };
+  const [page, ahead] = await Promise.all([
+    actions.list(scope, { table: STAFF.punches, filters: [{ field: "at", op: "gte", value: from }, { field: "at", op: "lte", value: now + FUTURE_SLACK_S }, ...who], order_by: { field: "at", direction: "desc" }, limit: 100 }),
+    actions.list(scope, { table: STAFF.punches, filters: [{ field: "at", op: "gte", value: now + FUTURE_SLACK_S + 1 }, ...who], order_by: { field: "at", direction: "asc" }, limit: 20 }),
+  ]);
+  return { punches: page.records.flatMap(read), more: page.nextCursor !== null || page.truncated, future: ahead.records.flatMap(read), moreFuture: ahead.nextCursor !== null || ahead.truncated };
 }
 /** An import or correction is stamped with the employee's account only when the link is confirmed; otherwise with `-`. */
 const directoryMap = (rows: DirectoryRow[]) => new Map<string, DirectoryEntry>(rows.filter((e) => e.employeeNo !== "").map((e) => [e.employeeNo, { id: e.id, memberId: linkedAccount(e) }]));
