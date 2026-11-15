@@ -34,7 +34,8 @@
       "prompts": [
         "Request leave for an employee",
         "Which leave requests are pending?",
-        "List the leave types"
+        "List the leave types",
+        "What is an employee's leave balance?"
       ]
     },
     {

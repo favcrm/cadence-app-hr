@@ -178,7 +178,7 @@ test("a new leave type code is checked for a duplicate, except against the form'
 });
 
 test("a leave type's code is read-only after creation: an edit neither shows nor sends it", async () => {
-  expect(R.editable(R.LEAVE_TYPE).fields.map((f) => f.key)).toEqual(["name", "paid"]);
+  expect(R.editable(R.LEAVE_TYPE).fields.map((f) => f.key)).toEqual(["name", "paid", "accrual"]);
   expect(R.LEAVE_TYPE.fields.find((f) => f.key === "code")).toMatchObject({ fixed: true, required: true });
   const record = row("lt-1", { code: "OLD", name: "Old name", paid: true });
   const renamed = fake([rec("lt-1", {}, 2)]);
@@ -265,13 +265,14 @@ test("an update names the revision and sends only changed fields; no change send
   expect(changed.calls).toEqual([{ verb: "records.update", args: { table: "claims", record_id: "cl-1", expected_revision: 4, profile: { amount_minor: 1300 } } }]);
 });
 
-test("an owner decision writes status, date and note only, and a stage move writes the stage only", async () => {
-  const record = row("lv-1", { status: "pending" }, 2);
-  const a = fake([rec("lv-1", {}, 3)]);
-  await S.decide(scope, R.LEAVE_REQUEST, record, "approved", "2026-03-05", "", a.actions);
-  expect(a.calls[0]!.args).toEqual({ table: "leave_requests", record_id: "lv-1", expected_revision: 2, profile: { status: "approved", decided_on: "2026-03-05", decision_note: null } });
-  const b = fake([rec("lv-1", {}, 3)]);
-  await S.decide(scope, R.LEAVE_REQUEST, record, "rejected", "2026-03-05", "  Not covered  ", b.actions);
+test("an owner decision on a claim writes status, date and note only, and a stage move writes the stage only", async () => {
+  // A leave request's decision also writes or checks its ledger entry: see tests/unit/ledger.test.ts.
+  const record = row("cl-1", { status: "submitted" }, 2);
+  const a = fake([rec("cl-1", {}, 3)]);
+  await S.decide(scope, R.CLAIM, record, "approved", "2026-03-05", "", a.actions);
+  expect(a.calls[0]!.args).toEqual({ table: "claims", record_id: "cl-1", expected_revision: 2, profile: { status: "approved", decided_on: "2026-03-05", decision_note: null } });
+  const b = fake([rec("cl-1", {}, 3)]);
+  await S.decide(scope, R.CLAIM, record, "rejected", "2026-03-05", "  Not covered  ", b.actions);
   expect((b.calls[0]!.args.profile as Record<string, unknown>).decision_note).toBe("Not covered");
   expect(() => R.decisionPatch("rejected", "2026-03-05", "x".repeat(501))).toThrow(R.FormError);
   const c = fake([rec("cand-1", {}, 2)]);
@@ -352,17 +353,22 @@ test("a record write may carry 49,152 bytes of arguments, and every other operat
     "records.update": { table: "policies", record_id: "", expected_revision: 1, profile: {} },
     "records.list": { table: "policies", query: "" },
     "records.show": { table: "policies", record_id: "" },
+    "records.batch": { items: [{ record_id: "", table: "leave_entries", profile: {} }] },
+    "records.aggregate": { table: "leave_entries", group_by: ["employee_id", "leave_type"], sum: ["half_days"], query: "" },
     "screen.route.patch": { section: "policies", record_id: "" },
   };
   const sized = (verb: string, size: number) => {
-    const args = { ...base[verb] };
-    args[padField(verb)] = "x".repeat(size - json(args));
+    const args = structuredClone(base[verb]!);
+    const pad = size - json(args);
+    if (verb === "records.batch") (args.items as { record_id: string }[])[0]!.record_id = "x".repeat(pad);
+    else if (verb === "records.aggregate") args.query = "x".repeat(pad);
+    else args[padField(verb)] = "x".repeat(pad);
     expect(json(args)).toBe(size);
     return args;
   };
   expect(Object.keys(base).sort()).toEqual([...B.OPERATIONS].sort());
   for (const verb of B.OPERATIONS) {
-    const budget = verb === "records.create" || verb === "records.update" ? 49152 : 16384;
+    const budget = ["records.create", "records.update", "records.batch"].includes(verb) ? 49152 : 16384;
     expect(B.requestBudget(verb)).toBe(budget);
     expect(() => B.cleanArgs(verb, sized(verb, budget))).not.toThrow();
     let refused: unknown = null;

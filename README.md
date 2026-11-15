@@ -1,7 +1,7 @@
 # Cadence HR app
 
 Public repository: https://github.com/favcrm/cadence-app-hr.
-App identity is `hr`. Release 0.2.0 holds seven tables behind five tabs. People is
+App identity is `hr`. Release 0.3.0 adds leave balances as a ledger (below). Release 0.2.0 holds seven tables behind five tabs. People is
 the employee directory from 0.1.0. Policies, Leave, Claims and Recruiting are new:
 company policies, leave requests and leave types, expense claims, job openings
 and candidates. Leave and Claims show a pending queue with approve and reject as
@@ -33,6 +33,70 @@ empty. It is a generic template to edit, with no entitlement figures and no lega
   `app is not installable — ` (split on `; `) is the app-storage contract refusal (the same fix as the Accounting
   app); `tests/unit/test_assert_app_check.py` runs in CI with the other Python tests.
 
+## 0.3.0: leave balances as an append-only ledger
+
+A leave balance is never stored or edited: it is the host's sum of `leave_entries.half_days` for an employee and leave
+type. Approving a request deducts leave, an accrual run adds it, and a correction is a new entry.
+
+- **Storage.** `app/storage/003-leave-ledger.json` creates `leave_entries` (`employee_id`, `leave_type`, `half_days`,
+  `kind`, `effective_date`, `source_ref`, nullable `note`) with a unique index on `source_ref` and an index on
+  `employee_id`. The descriptor declares it `append_only` and `read_role: owner`, with a `write_schema`: a create only;
+  `half_days` an integer, never 0; `accrual` and `carry_forward` add, `taken` and `expiry` remove, an `adjustment` needs
+  a note. `leave_types` gets a `write_schema` too, so `accrual_rule` is either null or the format below, whoever
+  writes it. 001 and 002 are untouched (a test pins their hashes); 003 backfills nothing (the host refuses a backfill
+  of an append-only table). The schema version is 3 and, like 0.2.0, `compatible_schema_versions` is `[3]`.
+- **Operations.** The screen now declares `records.batch` and `records.aggregate` (seven operations). `records.batch`
+  gets the 49,152-byte write budget in the bridge and the receiver; `records.aggregate` keeps 16,384. The screen sends
+  a batch only when the board's pushed actions include it, and balances only when they include `records.aggregate`; on
+  a board without them, approval (which uses `records.create` only) keeps working and Balances says what is missing.
+- **Accrual rule.** `leave_types.accrual_rule` is `{"v":1,"days_per_year":[{"from_years":0,"days":7},{"from_years":3,"days":8}]}`:
+  a yearly entitlement in whole or half days by completed years of service (the first tier starts at 0, years rise).
+  The owner edits it on the leave type form as steps ("from 3 years of service: 8 days a year"), never as JSON. Rules
+  are the customer's own data: no entitlement figure ships with the app (the example above is synthetic) and nothing
+  here is legal advice. A rule the screen cannot read is kept as it is and accrues nothing.
+- **Monthly accrual, no drift.** Completed years are counted at the month's last day. With `H` yearly half-days, month
+  `m` (1 to 12) adds `floor(H*m/12) - floor(H*(m-1)/12)` half-days, so twelve months at one tier sum to exactly `H`
+  (checked for every `H` from 0 to 740) and the rounding falls on whole half-days. A month that adds 0 writes no entry.
+  A tier change takes effect in the month whose last day completes the years; each month is exact for its own tier.
+  Who accrues: a real join date is required (none: skipped); a month before the join month is skipped; someone who joins
+  or leaves mid-month accrues for that whole month; a real leave date before the month starts, or status `left` with
+  no leave date, is skipped (`left`). Each skip is shown with its reason.
+- **`source_ref` formats.** `taken-<request id>`, `accrual-<employee id>-<leave type>-<YYYY-MM>`,
+  `adjustment-<form id>` (one random id per open form, so a retry after a lost reply meets its own entry). The
+  column allows 200 characters, the longest accrual ref is 177. Record ids are random (`le-` plus 12 hex): the
+  idempotence is the unique `source_ref`, not the record id.
+- **Approve.** The owner's Approve re-reads the request (it must still be pending and at the revision shown), creates
+  its `taken` entry (minus its half-days, dated its first day; a request across a month boundary is one entry in the
+  month it starts), and only then sets the request approved. A conflict, a store refusal (the deployed host answers a
+  unique key with 503) or a timeout on the entry counts as "already recorded" only after a re-read by `source_ref`
+  finds the same entry; a different entry under that key, or none, stops. Rejecting writes no entry, and is refused
+  if an earlier approval already wrote the entry, because the deduction would otherwise stand for a rejected request:
+  approve again to finish.
+- **Run accrual** (Leave → Balances, owner). Pick a month (`YYYY-MM`, not after the current month), review (nothing is
+  written), then post. It reads employees, leave types and the month's existing refs (`prefix` `accrual-` plus
+  `contains` `-<month>`, paged to the end; a read that fails or does not finish stops, it is never read as "none") and
+  posts only the missing entries with `records.batch`. Chunks hold at most 200 items and 16,384 bytes of arguments:
+  the receiver allows 49,152, but a board without the CAD-2263 limit closes the frame above 16,384, and the limit
+  is not in a released board yet. A chunk is all or nothing. A chunk refused for a duplicate key is re-read and its
+  missing entries posted once; a stopped run reports how many are in and running it again continues. Running it twice
+  yields one entry each.
+- **Record earlier approvals** (Leave → Balances, owner). Finds every approved request without a `taken` entry,
+  whenever and however it was approved (before 0.3.0, or from a chat-staged approval, which skips the screen) and posts
+  the missing entries once. Requests that already have one are left alone.
+- **Adjust balance** (owner). A new `adjustment` entry with a required note, whole or half days with a sign. No entry is
+  ever updated; a mistake is corrected by another adjustment.
+- **Balances.** The Balances list, the employee detail and the balance beside a new request all come from one
+  `records.aggregate` grouped by `employee_id` and `leave_type`, with the moment of the read. A truncated answer is
+  said to be cut short and a person missing from it is not shown as zero; a failed read shows no figure. A request that
+  would take the balance below zero shows a warning and is still saved. The balance includes entries dated in the future
+  (approved leave not yet taken). `leave-desk` states a balance only from the same aggregate, with its as-of moment.
+- **Known limits.** If a request is rejected or changed from another session between the screen's re-read and its status
+  update, a `taken` entry can exist for a request that did not end approved; correct it with an adjustment. Employee
+  ids are the record ids; an employee deleted later keeps their entries. Balances list names from one read of up to
+  5,000 employees.
+- **Checker pin.** CI checks the bundle with Cadence v0.3.23-beta.1 (the first checker that knows the two operations;
+  the released v0.3.22 refuses them). Publishing still needs a released checker through `cadence_version`.
+
 ## Local development
 
 Use the Node version in `screen-ui.lock.json` and the pnpm version in
@@ -56,6 +120,7 @@ pnpm typecheck
 pnpm build
 pnpm verify
 pnpm test
+# the checker must be v0.3.23-beta.1 or later (CADENCE_BIN for scripts/pre-push)
 cadence app check app        # exit 3 is expected: hosted-only app-storage
 python3 scripts/package_app.py check --source app
 ```
@@ -66,15 +131,16 @@ hosted-only storage refusal.
 ## Layout
 
 - `app/` is the installable package: `app.md`, `app-storage.json` with
-  `storage/001-initial.json` and `storage/002-hr-records.json` pinned by sha256,
+  `storage/001-initial.json`, `storage/002-hr-records.json` and `storage/003-leave-ledger.json` pinned by sha256,
   `app-chat.json`, `skills/<tag>/` (five skill packages) and the generated screen
   under `screens/hr/`.
 - `src/bridge/` is the one adapter over the pinned app-kit bridge (`createScreenBridge`): the scope, the
   operations and their budgets, and the leave hint.
-- `src/domain/` is pure logic: `people.ts` (employees) and `records.ts` (the four new tabs: field
-  specs, form to profile, exact lookups, decisions, refusal classes).
+- `src/domain/` is pure logic: `people.ts` (employees), `records.ts` (the four new tabs: field
+  specs, form to profile, exact lookups, decisions, refusal classes) and `leave.ts` (the accrual rule, monthly accrual,
+  ledger entries, batch chunking).
 - `src/features/hr/` holds the screen: People, and one generic record pane (`RecordsPane.tsx`) driven by
-  `views.tsx` for the other tabs.
+  `views.tsx` for the other tabs; `ledger.ts` holds the ledger's host calls and `BalancesPane.tsx` the Balances list.
 - `tests/unit/`, `tests/contract/` and `tests/eval/` hold the tests; `tests/eval/` is the evaluation set.
 - `scripts/host-schema-check.mjs` and `scripts/host-skills-check.mjs` run the package through the host's own
   schema and skill-reader code (see Verification).
@@ -123,7 +189,7 @@ Migration `002-hr-records.json` adds six tables. The host has no alter-column op
 - `policies.body` holds up to 12,000 characters (`record_bytes` 131072); `candidates.cv_text` up to 12,000 characters
   (`record_bytes` 65536); `job_openings.description` up to 8,000 (`record_bytes` 32768).
 - `candidates.screening` is JSON with a required `summary` and at least one `reasons` entry, so a screening result
-  always carries reasons. `leave_types.accrual_rule` is JSON with no declared shape (release 0.3.0 defines it).
+  always carries reasons. `leave_types.accrual_rule` is JSON with no declared column shape; release 0.3.0 defines its format in the descriptor's write schema (see below).
 - A policy change is a new row plus a `retired` mark on the old one: a record's journal keeps 64 revisions.
 
 Write rules (`tables.leave_requests.write_schema`, `tables.claims.write_schema`) are not migrations: they change with

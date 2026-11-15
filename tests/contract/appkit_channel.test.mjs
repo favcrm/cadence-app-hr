@@ -30,7 +30,7 @@ const push = (extra = {}) => ({
   sources: [],
   defaults: [],
   readiness: [],
-  actions: ["records.list", "records.show", "records.create", "records.update", "screen.route.patch"],
+  actions: ["records.list", "records.show", "records.create", "records.update", "records.batch", "records.aggregate", "screen.route.patch"],
   now: "2026-11-05T00:00:00Z",
   resume: null,
   route: { section: "people", view: "list", record_id: null, segment_id: null },
@@ -316,7 +316,7 @@ test("a boot declared for another app never mounts", () => {
 // measured as UTF-8 bytes of the JSON text. The bridge measures the same way and refuses first.
 const json = (value) => new TextEncoder().encode(JSON.stringify(value)).length;
 const chinese = (n) => "員工每年可享有十四日有薪年假。".repeat(Math.ceil(n / 15)).slice(0, n);
-const BUDGET = { "records.create": 49152, "records.update": 49152, "records.list": 16384, "records.show": 16384, "screen.route.patch": 16384 };
+const BUDGET = { "records.create": 49152, "records.update": 49152, "records.batch": 49152, "records.aggregate": 16384, "records.list": 16384, "records.show": 16384, "screen.route.patch": 16384 };
 /** Arguments of exactly `size` bytes, padded with written Chinese (three bytes a character) and then ASCII. */
 function sized(verb, size) {
   const base = {
@@ -324,10 +324,12 @@ function sized(verb, size) {
     "records.update": { table: "policies", record_id: "pol-0123456789ab", expected_revision: 1, profile: { body: "" } },
     "records.list": { table: "policies", query: "" },
     "records.show": { table: "policies", record_id: "" },
+    "records.batch": { items: [{ record_id: "le-0123456789ab", table: "leave_entries", profile: { note: "" } }] },
+    "records.aggregate": { table: "leave_entries", group_by: ["employee_id", "leave_type"], sum: ["half_days"], query: "" },
     "screen.route.patch": { section: "policies", record_id: "" },
   }[verb];
   const args = structuredClone(base);
-  const put = (text) => { if (args.profile) args.profile.body = text; else if ("query" in args) args.query = text; else args.record_id = text; };
+  const put = (text) => { if (args.items) args.items[0].profile.note = text; else if (args.profile) args.profile.body = text; else if ("query" in args) args.query = text; else args.record_id = text; };
   const room = size - json(args);
   const wide = Math.floor(room / 3);
   put(chinese(wide) + "x".repeat(room - wide * 3));
@@ -355,6 +357,33 @@ test("the bridge sends 49,152 bytes for a record write and 16,384 for any other 
     }
   } finally {
     retire(channel);
+  }
+});
+
+test("an accrual run goes through the real bridge as batches the board accepts, and stops at the receiver's limit", async () => {
+  const { postEntries } = await import("../../src/features/hr/ledger.ts");
+  const { BATCH_CHUNK_BYTES } = await import("../../src/domain/leave.ts");
+  const env = await mountScreen();
+  const calls = () => env.events.filter((event) => event.op === "call");
+  const entries = Array.from({ length: 150 }, (_, i) => ({ employee_id: `emp-${String(i).padStart(12, "0")}`, leave_type: "ANNUAL", half_days: 1, kind: "accrual", effective_date: "2026-03-31", source_ref: `accrual-emp-${String(i).padStart(12, "0")}-ANNUAL-2026-03`, note: null }));
+  try {
+    const pending = postEntries(getScope().scope, entries);
+    let answered = 0, rows = 0;
+    while (rows < 150) {
+      const request = await waitFor(() => calls()[answered], `batch ${answered + 1}`);
+      expect(request.verb).toBe("records.batch");
+      expect(request.args.items.length).toBeLessThanOrEqual(200);
+      expect(json(request.args)).toBeLessThanOrEqual(BATCH_CHUNK_BYTES);
+      env.host().postMessage({ v: 2, op: "reply", id: request.id, ok: true, data: { rows: request.args.items.length } });
+      answered += 1; rows += request.args.items.length;
+      await settle();
+    }
+    expect(answered).toBeGreaterThan(1);
+    await expect(pending).resolves.toEqual({ posted: 150, alreadyThere: 0 });
+    expect(calls().reduce((n, c) => n + c.args.items.length, 0)).toBe(150);
+    expect(getScope()).not.toBeNull();
+  } finally {
+    retire(screen);
   }
 });
 

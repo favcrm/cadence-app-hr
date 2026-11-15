@@ -1,6 +1,7 @@
 import { Button, Detail, ErrorNotice, Loading, type DrawerTab } from "@cadence/screen-ui";
 import { useEffect, useState } from "react";
 import { buildProfile, changedFields, formFromProfile, viewProfile, type EmployeeForm as Fields } from "../../domain/people";
+import EmployeeBalances from "./EmployeeBalances";
 import EmployeeForm, { statusLabel, typeLabel, type FieldProblem } from "./EmployeeForm";
 import FrameDrawer from "./FrameDrawer";
 import { parseRecord, type HostScope } from "./hostActions";
@@ -10,8 +11,8 @@ import { updateEmployee, updateFailure } from "./submit";
 
 const FORM_ID = "hr-employee-edit";
 
-export default function EmployeeDrawer({ scope, recordId, canWrite, onClose }: {
-  scope: HostScope; recordId: string; canWrite: boolean; onClose: () => void;
+export default function EmployeeDrawer({ scope, recordId, canWrite, showBalances, onClose }: {
+  scope: HostScope; recordId: string; canWrite: boolean; showBalances: boolean; onClose: () => void;
 }) {
   const { t } = useLocale();
   const state = useHrQuery(scope, "records.show", { record_id: recordId }, parseRecord);
@@ -41,6 +42,7 @@ export default function EmployeeDrawer({ scope, recordId, canWrite, onClose }: {
 
   const tabs: DrawerTab[] = record && view ? [
     { id: "overview", label: t("Overview"), panel: (
+      <>
       <section className="hr-sect" aria-label={t("Employment")}>
         <h4>{t("Employment")}</h4>
         <Detail className="hr-detail" label={t("Employee fields")} items={[
@@ -56,6 +58,8 @@ export default function EmployeeDrawer({ scope, recordId, canWrite, onClose }: {
           ...(view.managerId ? [{ key: "manager", term: t("Manager"), value: <span className="num">{view.managerId}</span> }] : []),
         ]} />
       </section>
+      {showBalances && <EmployeeBalances scope={scope} employeeId={recordId} />}
+      </>
     ) },
     { id: "details", label: t("Details"), panel: (
       <section aria-label={t("Record diagnostics")}>

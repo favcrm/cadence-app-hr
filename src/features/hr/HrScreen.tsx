@@ -50,12 +50,14 @@ function Body() {
   const { scope, route, actions } = snapshot;
   const canList = actions.includes("records.list");
   const canWrite = actions.includes("records.create") && actions.includes("records.update");
+  // Balances need `records.aggregate`; a bulk post needs `records.batch`. A board that does not offer them keeps the rest working.
+  const caps = { aggregate: actions.includes("records.aggregate"), batch: actions.includes("records.batch") };
   const recordId = detail !== null && detail === dismissed ? null : route.record_id;
   const go = (patch: Parameters<typeof patchRoute>[0]) => { void patchRoute(patch).catch(() => undefined); };
   // A create that landed but could not move the screen on would leave the owner on a filled form, so say so.
   const created = (id: string) => { void patchRoute({ view: "list", record_id: id, segment_id: null }).catch(() => setSavedNotice(true)); };
   const section = route.section;
-  const pane = { scope, canWrite, recordId, onSelect: (id: string) => { setDismissed(null); go({ view: "list", record_id: id }); }, onClose: () => { setDismissed(detail); go({ view: "list", record_id: null }); } };
+  const pane = { scope, canWrite, caps, recordId, onSelect: (id: string) => { setDismissed(null); go({ view: "list", record_id: id }); }, onClose: () => { setDismissed(detail); go({ view: "list", record_id: null }); } };
   return (
     <main className="app-outlet hr" key={`${scope.installId}:${snapshot.digest}`}>
       <nav className="hr-tabs hr-actions" aria-label={t("HR sections")}>
@@ -76,7 +78,7 @@ function Body() {
                 onSelect={(id) => { setDismissed(null); go({ view: "list", record_id: id }); }} />}
       </div>
       {canList && section === "people" && recordId !== null && (
-        <EmployeeDrawer scope={scope} recordId={recordId} canWrite={canWrite} onClose={() => { setDismissed(detail); go({ view: "list", record_id: null }); }} />
+        <EmployeeDrawer scope={scope} recordId={recordId} canWrite={canWrite} showBalances={caps.aggregate} onClose={() => { setDismissed(detail); go({ view: "list", record_id: null }); }} />
       )}
     </main>
   );

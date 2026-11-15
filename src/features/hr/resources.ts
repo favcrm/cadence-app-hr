@@ -38,6 +38,28 @@ export function useHrQuery<T>(scope: HostScope, operation: keyof CallArgs, args:
   const data = query.data ?? observed;
   return { data, error: query.error, failure: failures.get(store), loading: data === null && query.inFlight, updating: data !== null && query.inFlight, store };
 }
+/**
+ * The same cached, invalidated-on-write read as `useHrQuery`, for a read that is not one host call: the balances with
+ * their directory, an employee's balances. `selectors` names what the load depends on (it is part of the cache key).
+ */
+export function useHrLoader<T>(scope: HostScope, name: string, selectors: object, load: () => Promise<T>): { data: T | null; error: string | null; failure: unknown; loading: boolean; updating: boolean; store: Resource<T> } {
+  const pushed = useScope();
+  const key = JSON.stringify([scope.installId, pushed?.digest ?? "retired", `load:${name}`, canonicalArgs(selectors)]);
+  const store: Resource<T> = cache.family("hr", async () => {
+    try {
+      const result = await load();
+      failures.delete(store);
+      return result;
+    } catch (error) { failures.set(store, error); throw error; }
+  }, { freshMs: 0, discardOnError: (e: unknown) => {
+    const denied = e instanceof ApiError && [401, 403].includes(e.status);
+    if (denied) observationInvalid = true;
+    return denied;
+  } })(key);
+  const query = useQuery(store);
+  const data = query.data ?? null;
+  return { data, error: query.error, failure: failures.get(store), loading: data === null && query.inFlight, updating: data !== null && query.inFlight, store };
+}
 export function QueryRefresh({ updating }: { updating: boolean }) {
   // Kept in a .ts module without JSX so resource adapters stay plain TS.
   return updating ? "Updating…" : null;

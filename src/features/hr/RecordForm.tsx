@@ -2,6 +2,7 @@ import { ErrorNotice, Field, Select } from "@cadence/screen-ui";
 import { useState } from "react";
 import { useUnsavedEdits } from "../../bridge/leave";
 import { FormError, optionLabel, type Field as Spec, type TableSpec, type Values } from "../../domain/records";
+import AccrualEditor from "./AccrualEditor";
 import { useLocale } from "./locale";
 
 export { optionLabel };
@@ -10,8 +11,10 @@ const offered = (list: readonly string[], current: string) => (list.includes(cur
 
 const inputType = (f: Spec) => (f.kind === "email" ? "email" : f.kind === "phone" ? "tel" : "text");
 
-export default function RecordForm({ spec, formId, initial, problem, onSubmit, children }: {
+export default function RecordForm({ spec, formId, initial, problem, onSubmit, aside, children }: {
   spec: TableSpec; formId: string; initial: Values; problem: RecordProblem | null;
+  /** Shown under the fields and above the actions, from the values typed so far (a balance next to a request). */
+  aside?: (values: Values) => React.ReactNode;
   /** May throw a FormError; the form shows it under its field. Call `settle` once the values are stored, before
    *  moving the screen on, so the board does not warn about edits that are saved. */
   onSubmit: (values: Values, settle: () => void) => void; children?: React.ReactNode;
@@ -29,11 +32,12 @@ export default function RecordForm({ spec, formId, initial, problem, onSubmit, c
       return <Select id={id} full aria-label={t(f.label)} value={values[f.key]!} onChange={(v) => set(f.key, v)}
         options={offered(f.options!, initial[f.key] ?? "").map((value) => ({ value, label: t(optionLabel(value)) }))} />;
     }
+    if (f.kind === "accrual") return <AccrualEditor id={id} value={values[f.key]!} onChange={(v) => set(f.key, v)} />;
     if (f.kind === "longtext") {
       return <textarea {...c} className="field hr-textarea" rows={f.key === "body" || f.key === "cvText" || f.key === "description" ? 8 : 3} value={values[f.key]!}
         maxLength={f.max} onChange={(e) => set(f.key, e.target.value)} />;
     }
-    return <input {...c} className="field" type={inputType(f)} inputMode={f.kind === "money" || f.kind === "days" ? "decimal" : undefined} value={values[f.key]!}
+    return <input {...c} className="field" type={inputType(f)} inputMode={f.kind === "money" || f.kind === "days" || f.kind === "sdays" ? "decimal" : undefined} value={values[f.key]!}
       maxLength={f.max} autoComplete="off" onChange={(e) => set(f.key, e.target.value)} />;
   };
   return (
@@ -50,6 +54,7 @@ export default function RecordForm({ spec, formId, initial, problem, onSubmit, c
           </Field>
         );
       })}
+      {aside?.(values)}
       {shown && shown.field === null && <ErrorNotice bare>{shown.message}</ErrorNotice>}
       {children}
     </form>
