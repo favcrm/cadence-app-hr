@@ -393,6 +393,119 @@ test("approved requests with no entry get one, once; those that have one are lef
   expect(taken(host).length).toBe(2);
 });
 
+// ---- deductions left on rejected or cancelled requests (HR-10) -----------------------------------------------
+const takenOf = (id: string, half = -4, over: Record<string, unknown> = {}) => ({ employee_id: "emp-aaa", leave_type: "ANNUAL", half_days: half, kind: "taken", effective_date: "2026-03-02", source_ref: `taken-${id}`, note: null, ...over });
+const recoveryEntries = (plan: Awaited<ReturnType<typeof G.planRecovery>>) => plan.rows.map((r) => r.entry);
+/** An owner request whose approval stopped after its entry and was then rejected from the chat, and a staff one cancelled the same way. */
+async function leftovers() {
+  const host = withRequest();
+  host.add("leave_entries", "le-open", { employee_id: "emp-aaa", leave_type: "ANNUAL", half_days: 20, kind: "adjustment", effective_date: "2026-01-01", source_ref: "adjustment-open", note: "Opening" });
+  await stopApproval(host);
+  host.of("leave_requests")[0]!.profile.status = "rejected"; // a chat-staged status change: no reversal
+  host.add("staff_leave_requests", "mem_0001", request({ status: "cancelled", half_days: 2, member_id: "usr_x" }));
+  host.add("leave_entries", "le-s", takenOf("mem_0001", -2));
+  return host;
+}
+
+test("a rejected or cancelled request whose deduction still stands is listed and reversed once; a second run lists nothing", async () => {
+  const host = await leftovers();
+  // Left alone: rejected through the screen (already reversed), rejected with no entry, approved, and pending with an entry.
+  host.add("leave_requests", "lv-rev", request({ status: "rejected" }));
+  host.add("leave_entries", "le-r1", takenOf("lv-rev"));
+  host.add("leave_entries", "le-r2", (L.reversalEntry("lv-rev", takenOf("lv-rev")) as { entry: object }).entry);
+  host.add("leave_requests", "lv-none", request({ status: "rejected" }));
+  host.add("leave_requests", "lv-ok", request({ status: "approved" }));
+  host.add("leave_entries", "le-ok", takenOf("lv-ok"));
+  host.add("staff_leave_requests", "mem_0002", request({ member_id: "usr_x" }));
+  host.add("leave_entries", "le-wait", takenOf("mem_0002"));
+  expect(await net(host)).toBe(20 - 4 - 2 - 4 + 4 - 4 - 4);
+  host.calls.length = 0;
+  const plan = await G.planRecovery(scope, host.actions);
+  expect(plan.rows.map((r) => [r.requestId, r.staff, r.entry.source_ref, r.entry.half_days]).sort()).toEqual([
+    ["lv-1", false, "reversal-taken-lv-1", 4], ["mem_0001", true, "reversal-taken-mem_0001", 2],
+  ]);
+  // The reject path's own reversal, from the stored entry.
+  expect(plan.rows[0]!.entry).toEqual((L.reversalEntry("lv-1", takenOf("lv-1")) as { entry: object }).entry);
+  expect(plan).toMatchObject({ alreadyThere: 1, unusable: [], more: false });
+  // Bounded reads: each table's rejected and cancelled requests, newest first, a page at a time; the ledger only by exact ref.
+  const lists = host.calls.filter((c) => c.verb === "records.list");
+  expect(host.calls.every((c) => c.verb === "records.list")).toBe(true);
+  for (const c of lists.filter((c) => c.args.table !== "leave_entries")) {
+    expect(["leave_requests", "staff_leave_requests"]).toContain(c.args.table);
+    expect(c.args).toMatchObject({ filters: [{ field: "status", op: "eq", value: expect.stringMatching(/^(rejected|cancelled)$/) }], order_by: { field: "created_at", direction: "desc" }, limit: 100 });
+  }
+  for (const c of lists.filter((c) => c.args.table === "leave_entries")) expect(c.args.filters.map((f: { field: string; op: string }) => [f.field, f.op])).toEqual([["source_ref", "in"]]);
+  expect(await G.postEntries(scope, recoveryEntries(plan), undefined, host.actions)).toEqual({ posted: 2, alreadyThere: 0 });
+  expect(reversals(host).map((e) => e.source_ref).sort()).toEqual(["reversal-taken-lv-1", "reversal-taken-lv-rev", "reversal-taken-mem_0001"]);
+  expect(await net(host)).toBe(20 - 4 - 4); // only the approved request and the pending one still deduct
+  const again = await G.planRecovery(scope, host.actions);
+  expect(again).toMatchObject({ rows: [], alreadyThere: 3, unusable: [], more: false });
+  noUpdateOfEntries(host);
+});
+
+test("a recovery write that fails is retried safely: nothing written is reversed again, and a lost reply counts as done", async () => {
+  // Refused before landing: the run stops with nothing written, the next review still lists both, and a re-post writes each once.
+  const host = await leftovers();
+  const plan = await G.planRecovery(scope, host.actions);
+  host.fault("records.batch", new ApiError("down", 503));
+  const error = await G.postEntries(scope, recoveryEntries(plan), undefined, host.actions).catch((e: unknown) => e);
+  expect(error).toBeInstanceOf(G.PostStopped);
+  expect((error as InstanceType<typeof G.PostStopped>).done).toEqual({ posted: 0, alreadyThere: 0 });
+  expect(reversals(host)).toEqual([]);
+  const retry = await G.planRecovery(scope, host.actions);
+  expect(retry.rows.map((r) => r.requestId).sort()).toEqual(["lv-1", "mem_0001"]);
+  expect(await G.postEntries(scope, recoveryEntries(retry), undefined, host.actions)).toEqual({ posted: 2, alreadyThere: 0 });
+  // The same (now stale) plan posted again meets its own entries: nothing is added.
+  expect(await G.postEntries(scope, recoveryEntries(retry), undefined, host.actions)).toEqual({ posted: 0, alreadyThere: 2 });
+  expect(reversals(host).length).toBe(2);
+  expect((await G.planRecovery(scope, host.actions)).rows).toEqual([]);
+  // A timeout after the batch landed: the re-read finds the same entries, one per request.
+  const lost = await leftovers();
+  lost.fault("records.batch", new ApiError("timeout", 504), { after: true });
+  expect(await G.postEntries(scope, recoveryEntries(await G.planRecovery(scope, lost.actions)), undefined, lost.actions)).toEqual({ posted: 0, alreadyThere: 2 });
+  expect(reversals(lost).map((e) => e.source_ref).sort()).toEqual(["reversal-taken-lv-1", "reversal-taken-mem_0001"]);
+  expect((await G.planRecovery(scope, lost.actions)).rows).toEqual([]);
+  noUpdateOfEntries(lost);
+});
+
+test("a deduction stored in an unexpected form is listed apart and never reversed; older requests past the limit are said to be unread", async () => {
+  const host = makeHost();
+  host.add("leave_requests", "lv-bad", request({ status: "rejected" }));
+  host.add("leave_entries", "le-bad", takenOf("lv-bad", -4, { effective_date: "2026-02-30" }));
+  const plan = await G.planRecovery(scope, host.actions);
+  expect(plan.rows).toEqual([]);
+  expect(plan.unusable).toEqual([{ id: "lv-bad", reason: expect.stringMatching(/not in the expected form/) }]);
+  expect(reversals(host)).toEqual([]);
+  // More rejected requests than the stated limit: the newest pages are read, no more, and the plan says so.
+  for (let i = 0; i < G.RECOVERY_LIMIT; i += 1) host.add("leave_requests", `lv-x${i}`, request({ status: "rejected" }));
+  host.calls.length = 0;
+  const capped = await G.planRecovery(scope, host.actions);
+  expect(capped.more).toBe(true);
+  expect(host.calls.filter((c) => c.args.table === "leave_requests" && c.args.filters[0].value === "rejected").length).toBe(G.RECOVERY_PAGES);
+});
+
+test("the recovery notes fill every placeholder, in English and zh-HK, and the staff balances note stays after posting", async () => {
+  const { renderToStaticMarkup } = await import("react-dom/server");
+  const { createElement } = await import("react");
+  const { HrLocaleProvider } = await import("../../src/features/hr/locale.tsx");
+  const N = await import("../../src/features/hr/RecoveryNotes.tsx");
+  const entry = (L.reversalEntry("mem_0001", takenOf("mem_0001", -2)) as { entry: L.LedgerEntry }).entry;
+  const rows = Array.from({ length: 12 }, (_, i) => ({ requestId: `r${i}`, staff: i === 0, entry }));
+  const plan = { rows, alreadyThere: 1, unusable: [{ id: "lv-bad", reason: "x" }], more: true };
+  for (const locale of ["en", "zh-TW"] as const) {
+    const render = (node: unknown) => renderToStaticMarkup(createElement(HrLocaleProvider, { locale }, node as never));
+    const html = render(createElement(N.RecoverySummary, { plan, nameOf: (id: string) => `Name of ${id}` }));
+    expect(html).toContain("data-recovery-more");
+    expect(html).toContain("data-staff-balances-note");
+    expect(html).toContain(String(G.RECOVERY_LIMIT));
+    expect(html).not.toContain("{");
+    // The notice after posting repeats the staff balances note, and only when a staff request was reversed.
+    expect(render(createElement(N.StaffBalancesNote, { plan }))).toContain("data-staff-balances-note");
+    expect(render(createElement(N.StaffBalancesNote, { plan: { ...plan, rows: rows.slice(1) } }))).toBe("");
+  }
+  expect(N.fillCount("{count} and {count}", "5")).toBe("5 and 5");
+});
+
 // ---- corrections ---------------------------------------------------------------------------------------------
 test("an adjustment is a new signed entry with a required note; a retry with the same reference adds no second entry", async () => {
   const host = makeHost();
@@ -447,6 +560,19 @@ test("balances come from the aggregate grouped by employee and leave type, with 
   expect(host.calls.at(-1)!.args.filters).toEqual([{ field: "employee_id", op: "eq", value: "emp-a" }, { field: "leave_type", op: "eq", value: "ANNUAL" }]);
 });
 
+test("the hint for an employee with no entries says none is recorded and works out no figure after the request (HR-10)", async () => {
+  const host = makeHost();
+  host.add("employees", "emp-a", employee("a", { employee_no: "E-A" }));
+  const none = await G.readRequestBalance(scope, "E-A", "ANNUAL", host.actions);
+  expect(none.halfDays).toBeNull();
+  expect(L.balanceHintView(none.balances, none.employeeId, "ANNUAL", 4)).toEqual({ kind: "none_recorded" });
+  expect(L.balanceAfter(none.balances, none.employeeId, "ANNUAL", 4)).toBeNull();
+  // Once an entry is recorded, the figure after the request comes from it.
+  host.add("leave_entries", "le-a", { employee_id: "emp-a", leave_type: "ANNUAL", half_days: 10, kind: "accrual", effective_date: "2026-02-28", source_ref: "accrual-emp-a-ANNUAL-2026-02", note: null });
+  const some = await G.readRequestBalance(scope, "E-A", "ANNUAL", host.actions);
+  expect(L.balanceHintView(some.balances, some.employeeId, "ANNUAL", 4)).toEqual({ kind: "balance", halfDays: 10, after: 6 });
+});
+
 test("a truncated aggregate is reported, and a malformed one is an invalid receipt, never a zero", async () => {
   expect(parseAggregate({ groups: [], group_limit: 1000, truncated: true })).toEqual({ groups: [], truncated: true, groupLimit: 1000 });
   const bad: unknown[] = [null, {}, { groups: [] }, { groups: [], truncated: "no" }, { groups: [{ key: {}, count: 1 }], truncated: false }, { groups: [{ key: {}, count: 1, sums: { half_days: 1.5 } }], truncated: false },
@@ -461,7 +587,7 @@ test("a truncated aggregate is reported, and a malformed one is an invalid recei
   await expect(G.readBalances(scope, [], noSum as never)).rejects.toMatchObject({ status: 502 });
 });
 
-test("no ledger flow ever updates an entry: approve, reject with a reversal, accrual, earlier approvals, adjustments", async () => {
+test("no ledger flow ever updates an entry: approve, reject with a reversal, accrual, earlier approvals, recovered deductions, adjustments", async () => {
   const host = company(3);
   host.add("employees", "emp-aaa", employee("aaa", { employee_no: "E-001" }));
   host.add("leave_requests", "lv-1", request());
@@ -473,6 +599,10 @@ test("no ledger flow ever updates an entry: approve, reject with a reversal, acc
   await reject(host, stored(host, "lv-2"));
   await G.runAccrual(scope, await G.planMonth(scope, "2026-03", host.actions), undefined, host.actions);
   await G.postEntries(scope, (await G.planReconcile(scope, host.actions)).entries, undefined, host.actions);
+  host.add("leave_requests", "lv-chat", request({ status: "rejected" }));
+  host.add("leave_entries", "le-chat", takenOf("lv-chat"));
+  await G.postEntries(scope, recoveryEntries(await G.planRecovery(scope, host.actions)), undefined, host.actions);
+  expect(reversals(host).map((e) => e.source_ref).sort()).toEqual(["reversal-taken-lv-2", "reversal-taken-lv-chat"]);
   await G.adjustBalance(scope, { employeeNo: "E-001", leaveType: "ANNUAL", days: "1", effectiveDate: "2026-03-05", note: "Opening" }, G.adjustmentRef("adj-1"), host.actions);
   expect(new Set(entries(host).map((e) => e.kind))).toEqual(new Set(["taken", "adjustment", "accrual"]));
   expect(host.calls.filter((c) => c.verb === "records.create" || c.verb === "records.batch").length).toBeGreaterThan(0);

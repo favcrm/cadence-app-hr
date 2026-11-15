@@ -1,7 +1,7 @@
 # Cadence HR app
 
 Public repository: https://github.com/favcrm/cadence-app-hr.
-App identity is `hr`. Release 0.5.0 adds staff self-service and clock-in (打卡, below). Release 0.4.0 adds monthly payroll with MPF and posting to the Accounting app (below); 0.3.0 added leave balances as a ledger. Release 0.2.0 holds seven tables behind five tabs. People is
+App identity is `hr`. Release 0.5.1 reverses leave deductions left on rejected requests and stops the request balance hint working a figure out from a missing balance (HR-10; no storage change). Release 0.5.0 adds staff self-service and clock-in (打卡, below). Release 0.4.0 adds monthly payroll with MPF and posting to the Accounting app (below); 0.3.0 added leave balances as a ledger. Release 0.2.0 holds seven tables behind five tabs. People is
 the employee directory from 0.1.0. Policies, Leave, Claims and Recruiting are new:
 company policies, leave requests and leave types, expense claims, job openings
 and candidates. Leave and Claims show a pending queue with approve and reject as
@@ -102,18 +102,31 @@ type. Approving a request deducts leave, an accrual run adds it, and a correctio
 - **Record earlier approvals** (Leave → Balances, owner). Finds every approved request without a `taken` entry,
   whenever and however it was approved (before 0.3.0, or from a chat-staged approval, which skips the screen) and posts
   the missing entries once. Requests that already have one are left alone.
+- **Reverse deductions on rejected or cancelled requests** (Leave → Balances, owner, 0.5.1). Lists rejected and cancelled requests,
+  in `leave_requests` and `staff_leave_requests`, that have a `taken-<id>` entry and no `reversal-taken-<id>` (an
+  approval stopped after its entry and the request was then rejected outside the screen, such as a chat-staged
+  status change), and writes the reject path's own reversal (`reversalEntry`, from the stored entry) once each with
+  `records.batch`, retry-safe like the other batches. A second run lists nothing. Reads are bounded: the newest 500
+  rejected and 500 cancelled requests of each table (pages of 100, newest first; "older ones are not shown" when
+  there are more, and a leftover older than that window stays out of reach: correct it with an adjustment), then the ledger by exact `source_ref` (`in`, 50 at a time). A member files only `pending` rows and
+  never updates, so a member's flood is never in these lists (tested with 5,000 rows). A stored entry not in the
+  expected form is listed apart and left for an adjustment. A reversed staff request changes that member's balance:
+  the summary, and the notice after posting, say to run Update staff balances.
 - **Adjust balance** (owner). A new `adjustment` entry with a required note, whole or half days with a sign. No entry is
   ever updated; a mistake is corrected by another adjustment.
 - **Balances.** The Balances list, the employee detail and the balance beside a new request all come from one
   `records.aggregate` grouped by `employee_id` and `leave_type`, with the moment of the read. A truncated answer is
   said to be cut short and a person missing from it is not shown as zero; a failed read shows no figure. A complete
-  answer with no group for the employee and leave type says no leave has been recorded, never "0 days", here as on
+  answer with no group for the employee and leave type says no leave has been recorded, never "0 days" and no "after
+  this request" figure (0.5.1), here as on
   the employee's balances and in `leave-desk` (a test reads the skill and checks it calls the same aggregate and
   prints half-days the same way). A request that
   would take the balance below zero shows a warning and is still saved. The balance includes entries dated in the future
   (approved leave not yet taken). `leave-desk` states a balance only from the same aggregate, with its as-of moment.
 - **Known limits.** If a request is rejected or changed from another session between the screen's re-read and its status
-  update, a `taken` entry can exist for a request that did not end approved; correct it with an adjustment. The edit
+  update, a `taken` entry can exist for a request that did not end approved; from 0.5.1 "Reverse deductions on
+  rejected or cancelled requests" finds a rejected or cancelled one and reverses it (one changed and still pending, or approved,
+  needs an adjustment). The edit
   refusal is the screen's: the host's write rule lets a staged chat edit change a pending request that has a `taken`
   entry (approve then meets a different entry and stops; reject reverses the stored entry). A chat-staged approval is
   not refused by the host either (the `leave_requests` rule allows pending to approved): it writes no `taken` entry, so

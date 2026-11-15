@@ -10,7 +10,7 @@ mock.module("@cadence/screen-ui", sdkMock);
 const { makeStaffHost, member, OWNER, person, scope, descriptor } = await import("../support/staff-host.ts");
 const S = await import("../../src/features/hr/staff.ts");
 const { MEMBER_TABLES, STAFF, latestSnapshot, memberStatus } = await import("../../src/domain/staff.ts");
-const { readBalances, approveLeave } = await import("../../src/features/hr/ledger.ts");
+const { readBalances, approveLeave, planRecovery, postEntries } = await import("../../src/features/hr/ledger.ts");
 const { addSalary } = await import("../../src/features/hr/payroll.ts");
 const { FormError } = await import("../../src/domain/records.ts");
 const { SECTIONS } = await import("../../src/bridge/services.ts");
@@ -414,6 +414,29 @@ test("a member write the board reports as failed is read back: saved if it is th
   host.fault("records.create", new ApiError("boom", 500), { table: STAFF.leave });
   host.fault("records.list", new ApiError("boom", 500), { table: STAFF.leave });
   await expect(S.fileLeave(scope, snap, leaveForm, "slv-000000000011", amy)).rejects.toMatchObject({ status: 400, code: "failed" });
+  expect(host.closed.size).toBe(0);
+});
+
+test("HR-10: a staff request rejected from the chat after its deduction is found past a member's flood and reversed once", async () => {
+  const { host, owner, amy } = await world();
+  const filed = await S.fileLeave(scope, await home(amy), leaveForm, "slv-000000000021", amy);
+  // The screen's approval writes the taken entry and stops before the status; the owner then rejects it from the chat.
+  host.fault("records.update", new ApiError("lost", 504), { table: STAFF.leave, viewer: "owner", frame: true });
+  await expect(S.decideStaff(scope, STAFF.leave, filed, "approved", "2026-11-16", "", NOW, owner)).rejects.toBeDefined();
+  const pending = await owner.show(scope, filed.id, STAFF.leave);
+  await owner.update(scope, filed.id, pending.revision, { status: "rejected", decided_on: "2026-11-16", decision_note: "Staged in chat" }, STAFF.leave);
+  const amyBalance = async () => (await readBalances(scope, [{ field: "employee_id", op: "eq", value: "emp-amy" }], owner)).groups[0]!.halfDays;
+  expect(await amyBalance()).toBe(17 - 3);
+  // Eve files 5,000 requests; a member can file them only pending and never update, so none is read here.
+  for (let i = 0; i < 5000; i += 1) host.add(STAFF.leave, `mem_q${i}`, { employee_id: "emp-ben", member_id: EVE, employee_name: "Ben Lee", leave_type: "ANNUAL", start_date: "2026-12-01", end_date: "2026-12-01", half_days: 2, reason: "", status: "pending", decided_on: null, decision_note: null, client_ref: `slv-flood-${i}` });
+  host.calls.length = 0;
+  const plan = await planRecovery(scope, owner);
+  expect(plan.rows.map((r) => [r.requestId, r.staff, r.entry.half_days])).toEqual([[filed.id, true, 3]]);
+  expect(plan.more).toBe(false);
+  expect(host.calls.filter((c) => c.verb === "records.list" && c.table === STAFF.leave).length).toBe(2);
+  expect(await postEntries(scope, plan.rows.map((r) => r.entry), undefined, owner)).toEqual({ posted: 1, alreadyThere: 0 });
+  expect(await amyBalance()).toBe(17);
+  expect(await planRecovery(scope, owner)).toMatchObject({ rows: [], alreadyThere: 1 });
   expect(host.closed.size).toBe(0);
 });
 

@@ -272,25 +272,23 @@ export function balanceFor(balances: Balances, employeeId: string, leaveType: st
 /**
  * What the balance next to a new request can say, without any wording (the screen words it): `cut_short` when the
  * aggregate was truncated and has no group for them; `none_recorded` when it was complete and has no group (never "0",
- * as on the employee's own balances and in the `leave-desk` skill); otherwise the balance. `after` is what the request
- * would leave, or null when its days are unknown.
+ * as on the employee's own balances and in the `leave-desk` skill); otherwise the balance. Only a recorded balance has
+ * an `after` (what the request would leave, or null when its days are unknown): no figure is worked out from a
+ * balance that is not there.
  */
 export type BalanceHintView =
   | { kind: "cut_short" }
-  | { kind: "none_recorded"; after: number | null }
+  | { kind: "none_recorded" }
   | { kind: "balance"; halfDays: number; after: number | null };
 export function balanceHintView(balances: Balances, employeeId: string, leaveType: string, requestHalfDays: number | null): BalanceHintView {
   const have = balanceFor(balances, employeeId, leaveType);
-  const after = balanceAfter(balances, employeeId, leaveType, requestHalfDays);
-  if (have === null) return balances.truncated ? { kind: "cut_short" } : { kind: "none_recorded", after };
-  return { kind: "balance", halfDays: have, after };
+  if (have === null) return balances.truncated ? { kind: "cut_short" } : { kind: "none_recorded" };
+  return { kind: "balance", halfDays: have, after: balanceAfter(balances, employeeId, leaveType, requestHalfDays) };
 }
-/** What a new request would leave: null when the request's days are unknown. A missing group reads as 0 only when the aggregate was complete. */
+/** What a new request would leave: null when the request's days are unknown or no balance is recorded (never from an assumed 0). */
 export function balanceAfter(balances: Balances, employeeId: string, leaveType: string, requestHalfDays: number | null): number | null {
-  if (requestHalfDays === null) return null;
   const have = balanceFor(balances, employeeId, leaveType);
-  if (have === null && balances.truncated) return null;
-  return (have ?? 0) - requestHalfDays;
+  return requestHalfDays === null || have === null ? null : have - requestHalfDays;
 }
 
 // ---- batches -------------------------------------------------------------------------------------------

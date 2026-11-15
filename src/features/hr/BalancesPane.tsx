@@ -4,8 +4,12 @@ import { parseMonth, signedDays, SKIP_TEXT, type AccrualPlan } from "../../domai
 import { emptyValues, ADJUSTMENT, todayLocal, newRecordId, type Values } from "../../domain/records";
 import type { HostScope } from "./hostActions";
 import { hostErrorText } from "./hostErrors";
-import { adjustBalance, adjustmentRef, listAll, PostStopped, planMonth, planReconcile, postEntries, readBalances, type PostResult, type ReconcilePlan } from "./ledger";
+import {
+  adjustBalance, adjustmentRef, listAll, PostStopped, planMonth, planReconcile, planRecovery, postEntries, readBalances, type PostResult, type ReconcilePlan,
+  type RecoveryPlan,
+} from "./ledger";
 import { useLocale } from "./locale";
+import { fillCount, RecoverySummary, StaffBalancesNote } from "./RecoveryNotes";
 import RecordForm, { type RecordProblem } from "./RecordForm";
 import { problemFor } from "./recordsSubmit";
 import { QueryRefresh, useHrLoader } from "./resources";
@@ -21,9 +25,9 @@ type Phase<P> =
   | { s: "done"; plan: P; result: PostResult }
   | { s: "error"; message: string; done: PostResult | null };
 
-function StepAction<P>({ title, intro, children, reviewLabel, reviewDisabled = false, postLabel, review, summary, count, post, disabled, onPosted }: {
+function StepAction<P>({ title, intro, children, reviewLabel, reviewDisabled = false, postLabel, review, summary, doneNote, count, post, disabled, onPosted }: {
   title: string; intro: string; children?: ReactNode; reviewLabel: string; reviewDisabled?: boolean; postLabel: (n: number) => string;
-  review: () => Promise<P>; summary: (plan: P) => ReactNode; count: (plan: P) => number;
+  review: () => Promise<P>; summary: (plan: P) => ReactNode; doneNote?: (plan: P) => ReactNode; count: (plan: P) => number;
   post: (plan: P, onProgress: (done: number, total: number) => void) => Promise<PostResult>;
   disabled: string | null; onPosted: () => void;
 }) {
@@ -68,6 +72,7 @@ function StepAction<P>({ title, intro, children, reviewLabel, reviewDisabled = f
             <Notice state="saved">
               {t("{posted} entries posted.").replace("{posted}", formatNumber(phase.result.posted))}
               {phase.result.alreadyThere > 0 && <> {t("{count} were already recorded and were not added again.").replace("{count}", formatNumber(phase.result.alreadyThere))}</>}
+              {doneNote?.(phase.plan)}
             </Notice>
           )}
           {phase.s === "error" && (
@@ -149,6 +154,25 @@ function RecordEarlier({ scope, caps, onPosted }: { scope: HostScope; caps: Ledg
   );
 }
 
+/** Rejected or cancelled requests whose deduction still stands: list them, then write each one's reversal once. */
+function RecoverDeductions({ scope, caps, nameOf, onPosted }: { scope: HostScope; caps: LedgerCaps; nameOf: (id: string) => string; onPosted: () => void }) {
+  const { t } = useLocale();
+  return (
+    <StepAction<RecoveryPlan>
+      title={t("Reverse deductions on rejected or cancelled requests")}
+      intro={t("A request rejected or cancelled outside this screen, for example from the chat, after its approval had already deducted the leave keeps that deduction. This finds those requests and adds the reversing entry once each; requests already reversed are left alone.")}
+      disabled={caps.aggregate && caps.batch ? null : t("This workspace does not offer batch entries to this screen, so this cannot run here.")}
+      reviewLabel={t("Find rejected or cancelled requests that still deduct leave")} postLabel={(count) => fillCount(t("Reverse {count} deductions"), String(count))}
+      review={() => planRecovery(scope)}
+      summary={(plan) => <RecoverySummary plan={plan} nameOf={nameOf} />}
+      doneNote={(plan) => <StaffBalancesNote plan={plan} />}
+      count={(plan) => plan.rows.length}
+      post={(plan, onProgress) => postEntries(scope, plan.rows.map((r) => r.entry), onProgress)}
+      onPosted={onPosted}
+    />
+  );
+}
+
 function AdjustForm({ scope, onDone, onCancel }: { scope: HostScope; onDone: () => void; onCancel: () => void }) {
   const { t } = useLocale();
   const [pending, setPending] = useState(false);
@@ -222,6 +246,7 @@ export default function BalancesPane({ scope, canWrite, caps }: { scope: HostSco
           <div className="hr-actions"><Button variant="primary" onClick={() => { setSaved(false); setAdjusting(true); }}>{t("Adjust balance")}</Button></div>
           <RunAccrual scope={scope} caps={caps} onPosted={refresh} />
           <RecordEarlier scope={scope} caps={caps} onPosted={refresh} />
+          <RecoverDeductions scope={scope} caps={caps} nameOf={nameOf} onPosted={refresh} />
         </div>
       )}
     </section>

@@ -12,7 +12,7 @@ import { useHrLoader } from "./resources";
 import { fileClaim, fileLeave, listMine, punch, readMemberHome, requestLink, withdrawLeave } from "./staff";
 
 /** The release the staff view names in its bar. A test keeps it equal to package.json. */
-export const APP_VERSION = "0.5.0";
+export const APP_VERSION = "0.5.1";
 const TABS = ["My leave", "My claims", "Clock"] as const;
 const TZ = "Asia/Hong_Kong";
 const nowS = () => Math.floor(Date.now() / 1000);
