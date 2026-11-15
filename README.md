@@ -108,7 +108,7 @@ type. Approving a request deducts leave, an accrual run adds it, and a correctio
   status change), and writes the reject path's own reversal (`reversalEntry`, from the stored entry) once each with
   `records.batch`, retry-safe like the other batches. A second run lists nothing. Reads are bounded: the newest 500
   rejected and 500 cancelled requests of each table (pages of 100, newest first; "older ones are not shown" when
-  there are more), then the ledger by exact `source_ref` (`in`, 50 at a time). A member files only `pending` rows and
+  there are more, and a leftover older than that window stays out of reach: correct it with an adjustment), then the ledger by exact `source_ref` (`in`, 50 at a time). A member files only `pending` rows and
   never updates, so a member's flood is never in these lists (tested with 5,000 rows). A stored entry not in the
   expected form is listed apart and left for an adjustment. A reversed staff request changes that member's balance:
   the summary says to run Update staff balances.
