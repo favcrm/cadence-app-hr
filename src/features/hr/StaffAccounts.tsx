@@ -30,12 +30,13 @@ export default function StaffAccounts({ scope, canWrite, canBatch, onBack }: { s
   };
   // One row per account: its newest request.
   const rows = (data.data?.requests ?? []).filter((r, i, all) => all.findIndex((x) => x.memberId === r.memberId) === i);
-  const linkedCount = (data.data?.directory ?? []).filter((e) => e.memberId !== null).length;
+  const linkedCount = (data.data?.directory ?? []).filter((e) => e.linked).length;
   return (
     <section aria-label={t("Staff accounts")} className="hr-list">
       <h3 className="text-cardtitle font-medium text-ink-100" data-outlet-heading>{t("Staff accounts")}</h3>
       <p className="text-label text-ink-400"><button type="button" className="lnk" onClick={onBack}>← {t("People")}</button></p>
       <p className="text-label text-ink-400">{t("Staff who open HR with their own account see only My leave, My claims and Clock, and only their own records. They ask to be linked from there; check the code on their screen matches the code here, then link them to their employee record.")}</p>
+      <p className="text-label text-ink-400">{t("Linking lets that account read its own records: its requests and claims with your decision notes, its punches with your correction notes, and the balances published to it. Unlinking stops new publishing, but the account keeps reading what was already published to it and its own records.")}</p>
       {canWrite && (
         <div className="hr-actions">
           <Button disabled={pending || !canBatch || linkedCount === 0} loading={pending && linking === null}
@@ -55,10 +56,14 @@ export default function StaffAccounts({ scope, canWrite, canBatch, onBack }: { s
             { key: "name", header: t("Name given"), cell: (r) => r.name, cellClassName: "text-ink-100" },
             { key: "no", header: t("Employee number given"), cell: (r) => <span className="num">{r.employeeNo ?? "—"}</span> },
             { key: "code", header: t("Code"), cell: (r) => <span className="num">{memberCode(r.memberId)}</span>, cellClassName: "hr-nowrap" },
-            { key: "asked", header: t("Asked on"), cell: (r) => <span className="num">{hkParts(r.requestedAt).date}</span>, cellClassName: "hr-nowrap" },
-            { key: "linked", header: t("Linked to"), cell: (r) => r.linkedTo ? `${r.linkedTo.name} · ${r.linkedTo.employeeNo}` : <span className="text-ink-400">{t("Not linked")}</span> },
+            { key: "asked", header: t("Asked on"), cell: (r) => r.requestedAt === null ? <span className="text-ink-400">{t("Set on the employee record")}</span> : <span className="num">{hkParts(r.requestedAt).date}</span>, cellClassName: "hr-nowrap" },
+            { key: "linked", header: t("Linked to"), cell: (r) => r.linkedTo ? <>{`${r.linkedTo.name} · ${r.linkedTo.employeeNo}`}{!r.confirmed && <> <span className="chip" data-status="pending">{t("Needs confirmation")}</span></>}</> : <span className="text-ink-400">{t("Not linked")}</span> },
             { key: "act", header: t("Actions"), cell: (r) => !canWrite ? null : r.linkedTo ? (
-              <Button size="sm" disabled={pending} onClick={() => act(async () => { await unlinkEmployee(scope, r.linkedTo!, now()); return t("Unlinked."); }, "The account could not be unlinked.")}>{t("Unlink")}</Button>
+              <div className="hr-actions">
+                {!r.confirmed && <Button size="sm" variant="primary" disabled={pending || r.linkedTo.employeeNo === ""} title={t("Check the code on their screen first.")}
+                  onClick={() => act(async () => { await linkMember(scope, r.memberId, r.linkedTo!.employeeNo, now()); return t("Linked."); }, "The account could not be linked.")}>{t("Confirm")}</Button>}
+                <Button size="sm" disabled={pending} onClick={() => act(async () => { await unlinkEmployee(scope, r.linkedTo!, now()); return t("Unlinked."); }, "The account could not be unlinked.")}>{t("Unlink")}</Button>
+              </div>
             ) : linking === r.id ? (
               <form className="hr-actions" onSubmit={(e) => { e.preventDefault(); act(async () => { await linkMember(scope, r.memberId, employeeNo, now()); return t("Linked."); }, "The account could not be linked."); }}>
                 <label className="sr-only" htmlFor={`hr-link-${r.id}`}>{t("Employee number")}</label>

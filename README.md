@@ -240,25 +240,44 @@ preview (three tabs, balance from the ledger, time-only clock, withdraw a pendin
   `client_ref`), append-only, unique (`member_id`, `client_ref`). `006-self-service.json`: `staff_link_requests`,
   `staff_snapshots` and `leave_withdrawals` (append-only), `staff_leave_requests` and `staff_claims`. All six are
   `read_role: owner` with `row_owner: member_id` and an ordinary index on `member_id`.
-- **Owner or member.** The board pushes no role and closes the frame on any 403, so the screen must know before its
-  first read. It sends one `records.batch` of two identical items (record id `viewer-probe`) into `leave_withdrawals`:
-  an owner's batch reaches the store and the second item meets the first (409, the batch is all-or-nothing, nothing
-  written); a member is refused for naming a record id (400). Any other answer shows "could not tell" with a retry. A
-  board that does not offer `records.batch` keeps the 0.4.0 owner screen. Every call the staff view sends goes to one
-  of the six tables (`MEMBER_TABLES`, guarded in `staff.ts` and asserted by the tests).
-- **Linking (owner-managed).** An unlinked member can file nothing but a link request (the name they give, an optional
-  employee number); their screen shows a code from their account id, and People → Staff accounts shows the same code.
-  Linking writes the account id to the employee record's `member_id` (owner-only: the authority), then a
-  `staff_snapshots` row. One account per employee, one employee per account. Unlink clears it.
+- **Owner or member.** The board pushes no role, and it closes the frame on a 401 and on a 403 (except a 403
+  `owner_required` on a write, which it keeps non-fatal and hands the frame as code `owner_required`). It collapses
+  every other refusal (400, 413, 429, 5xx, an edge page, a fetch failure) to `failed`, which the frame sees as status
+  400. So the screen asks before its first read with one `records.update` of record `viewer-probe` in
+  `leave_withdrawals` (`expected_revision` 1, an empty profile): the owner meets the table's append-only rule (409,
+  before any row is read); a member never updates and is refused `owner_required` before any read. Only those two
+  answers are a role; anything else shows "could not tell" with a retry, and neither view is shown. A board that does
+  not offer `records.update` keeps the 0.4.0 owner screen. On a board older than Cadence CAD-2315 (which made the
+  member's write 403 non-fatal), a member's probe closes their frame: no data is shown. Every call the staff view sends
+  goes to one of the six tables (`MEMBER_TABLES`, guarded in `staff.ts` and asserted by the tests).
+- **Linking (owner-managed).** The staff view offers an unlinked member only a link request (the name they give, an
+  optional employee number); their screen shows a code from their account id, and People → Staff accounts shows the
+  same code. That is a screen choice, not a host rule: a member can craft rows in any of the six tables, and the
+  owner's checks (the linked-account match at approval, the flags in the staff lists and on punches) are the control.
+  Linking writes the account id to the employee record's `member_id` (owner-only), then a `staff_snapshots` row. A link
+  counts only when both hold: the record names the account, and the newest snapshot the owner's screen published for
+  that account names the employee. A `member_id` set before 0.5.0 (or by an edit outside Staff accounts) is listed as
+  "Needs confirmation": it is not a link, nothing is published to it, imports and corrections are not stamped with it,
+  and its rows are not approved, until the owner checks the code and confirms. One account per employee, one employee
+  per account. Unlink clears the record and publishes "not linked".
+- **What a linked account can read.** Its own rows in the six tables, including the owner's decision notes, correction
+  notes on its punches, imported punches and every snapshot published to it, with a crafted read as well as in the
+  staff view. After unlinking it keeps reading what was already published to it. The note fields and Staff accounts
+  say so.
 - **Balances.** Members cannot read `leave_entries`, and it cannot gain `row_owner` (append-only, populated). The
   owner's screen publishes each linked member's balances as a new snapshot row from the same `records.aggregate` the
   Balances tab reads: on linking, after deciding that member's leave request, and on "Update staff balances" (use it
-  after an accrual run). The staff view shows it "as of" its time, in days; an empty ledger shows "no leave recorded",
-  a failed read shows no figure. The staff view trusts only snapshots under a `snap-` id, which a member cannot write.
+  after an accrual run). The newest is the host's newest row (`order_by: created_at`), not the owner device's `as_of`
+  clock; two published in the same second may tie. The staff view shows it "as of" its time, in days; an empty ledger
+  shows "no leave recorded", a failed read shows no figure. The staff view trusts only snapshots under a `snap-` id,
+  which a member cannot write.
 - **Untrusted columns.** A member chooses every column except `member_id`. Approving a staff request or claim first
-  checks that its `member_id` is the account linked on that employee's record; otherwise it is refused. A punch's
-  source is read from its record id (`imp-` import, `cor-` correction, anything else a member's own punch), not from
-  its `method`; the Attendance list flags a staff punch not filed by that employee's linked account.
+  checks that its `member_id` is the account linked on that employee's record; otherwise it is refused. The staff lists
+  name the employee from the employee record by `employee_id` (the member typed `employee_name`) and flag a row not
+  filed from that employee's linked account. A punch's source is read from its record id (`imp-` import, `cor-`
+  correction, anything else a member's own punch), not from its `method`; the Attendance list flags a staff punch not
+  filed by that employee's linked account. A withdrawal counts only when the host matches both its `request_id` and
+  the request's `member_id`.
 - **Decisions and withdrawal.** Staff requests and claims are decided on Leave → Staff requests and Claims → Staff
   claims (no New, no Edit). A leave approval writes its `taken` entry first, exactly as for an owner request, and
   "Record earlier approvals" reads both tables. A member withdraws a pending request by filing a `leave_withdrawals`
@@ -273,9 +292,13 @@ preview (three tabs, balance from the ledger, time-only clock, withdraw a pendin
   HH:MM[:SS], in|out`, a header line skipped), previews every line (new, already imported, unknown employee, not
   readable, repeated), then imports the new lines in batches (at most 200 items and 16,384 bytes, about 50 punches) under ids derived from the line (`imp-` plus a
   64-bit FNV-1a of employee number, time and direction), so a second run adds nothing and a lost reply is read back.
-  An employee with no linked account gets `member_id` `-`.
-- **Retries.** Every member form holds a `client_ref` chosen once; after a timeout or conflict the screen reads the
-  member's own rows for it before saying anything.
+  An employee with no confirmed link gets `member_id` `-`. A member can predict an import id and file a punch under it
+  as `client_ref`, which refuses that batch; the import then sends the chunk one line at a time and lists each line it
+  still could not store, so the owner adds a correction for it.
+- **Retries.** Every member form holds a `client_ref` chosen once. After any failure other than its own form check the
+  screen reads the member's own rows for it: found is saved; a read-back that answers without it is "not saved"; a
+  read-back that fails is "may not be saved". The staff lists follow the cursor for a few pages and say when older
+  entries are not shown.
 - **Skills.** `attendance-review` summarises missing punches and late arrivals (against a start time the owner gives)
   and never writes. `leave-desk` and `claim-intake` read the staff tables too and never stage into them.
 - **Known limits.** No yearly archive: the host has no delete or archive verb, so punches stay (100,000 rows per table,
@@ -286,7 +309,8 @@ preview (three tabs, balance from the ledger, time-only clock, withdraw a pendin
   record, and linking says so. Owner-imported punches for a linked member count toward that member's 5,000-row
   limit; at the limit their clock-in answers "This was not saved". Updating an install from 0.4.0 is not a routine
   update: new table options are a record-contract change (`storage_record_contract_changed`), so the owner approves
-  the version, as for 0.4.0.
+  the version, as for 0.4.0. A linked account can read the owner's notes on its own rows and keeps reading what was
+  published to it after unlinking.
 
 ## Local development
 

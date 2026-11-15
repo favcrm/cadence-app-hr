@@ -6,7 +6,7 @@ import type { HostScope } from "./hostActions";
 import { hostErrorText } from "./hostErrors";
 import { useLocale } from "./locale";
 import { useHrLoader } from "./resources";
-import { addCorrection, importPunches, previewImport, readDirectory, readPunches } from "./staff";
+import { addCorrection, importPunches, linkedAccount, previewImport, readDirectory, readPunches } from "./staff";
 
 const DAYS = 7;
 const KIND_LABEL: Record<Punch["kind"], string> = { app: "Staff app", import: "Imported", correction: "Correction" };
@@ -54,7 +54,7 @@ function Punches({ scope }: { scope: HostScope }) {
             { key: "kind", header: t("Source"), cell: (r) => t(KIND_LABEL[r.kind]) },
             { key: "check", header: t("Check"), cell: (r) => {
               // A staff punch counts only from the account linked to that employee; the owner's own rows are trusted.
-              const linked = data.data!.directory.get(r.employeeId)?.memberId ?? null;
+              const linked = linkedAccount(data.data!.directory.get(r.employeeId));
               return r.kind === "app" && r.memberId !== linked ? <span className="chip" data-status="rejected">{t("Not from this employee's linked account")}</span> : r.note ? <span className="text-ink-400">{r.note}</span> : null;
             } },
           ]}
@@ -72,14 +72,16 @@ function Import({ scope, canWrite, canBatch }: { scope: HostScope; canWrite: boo
   const [pending, setPending] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
+  const [blocked, setBlocked] = useState<ImportLine[]>([]);
   const fresh = (lines ?? []).filter((l) => l.status === "new").length;
   const fail = (e: unknown, fallback: string) => setProblem(e instanceof FormError ? t(e.message) : t(hostErrorText(e, fallback)));
-  const preview = () => { setPending(true); setProblem(null); setDone(null); void previewImport(scope, text).then(setLines).catch((e: unknown) => fail(e, "The file could not be checked.")).finally(() => setPending(false)); };
+  const preview = () => { setPending(true); setProblem(null); setDone(null); setBlocked([]); void previewImport(scope, text).then(setLines).catch((e: unknown) => fail(e, "The file could not be checked.")).finally(() => setPending(false)); };
   const run = () => {
     if (!lines) return;
     setPending(true); setProblem(null);
     void importPunches(scope, lines).then((r) => {
       setDone(t("{imported} punches imported; {already} were already there.").replace("{imported}", formatNumber(r.imported)).replace("{already}", formatNumber(r.alreadyThere)));
+      setBlocked(r.blocked);
       setLines(null);
     }).catch((e: unknown) => fail(e, "The import stopped. Check the file again: lines already imported are skipped.")).finally(() => setPending(false));
   };
@@ -95,6 +97,12 @@ function Import({ scope, canWrite, canBatch }: { scope: HostScope; canWrite: boo
         {lines && <Button variant="primary" disabled={pending || fresh === 0} loading={pending} onClick={run}>{t("Import {count} punches").replace("{count}", formatNumber(fresh))}</Button>}
       </div>
       {done && <Notice state="saved">{done}</Notice>}
+      {blocked.length > 0 && (
+        <ErrorNotice>
+          {t("These lines were not imported: the workspace refused each one on its own, and none is stored. A punch filed from a staff account may already use the same reference. Add a correction for each instead.")}
+          <ul>{blocked.map((l) => <li key={l.line} className="num">{t("Line {line}").replace("{line}", String(l.line))}: {l.employeeNo} {l.at === null ? "" : `${hkParts(l.at).date} ${hkParts(l.at).time}`} {l.direction === null ? "" : t(l.direction === "in" ? "In" : "Out")}</li>)}</ul>
+        </ErrorNotice>
+      )}
       {problem && <ErrorNotice>{problem}</ErrorNotice>}
       {lines && lines.length === 0 && <Notice>{t("No punch lines were found.")}</Notice>}
       {lines && lines.length > 0 && (
@@ -141,7 +149,8 @@ function Correction({ scope, canWrite }: { scope: HostScope; canWrite: boolean }
       <label className="text-label" htmlFor="hr-cor-dir">{t("In or out")}</label>
       <Select id="hr-cor-dir" aria-label={t("In or out")} value={values.direction} onChange={set("direction")} options={[{ value: "in", label: t("In") }, { value: "out", label: t("Out") }]} />
       <label className="text-label" htmlFor="hr-cor-note">{t("Why")}</label>
-      <textarea id="hr-cor-note" className="field hr-textarea" rows={2} maxLength={500} value={values.note} onChange={(e) => set("note")(e.target.value)} />
+      <textarea id="hr-cor-note" className="field hr-textarea" rows={2} maxLength={500} value={values.note} onChange={(e) => set("note")(e.target.value)} aria-describedby="hr-cor-note-hint" />
+      <p id="hr-cor-note-hint" className="text-micro text-ink-500">{t("The employee's linked account can read this note with its own punches.")}</p>
       {problem && <ErrorNotice bare>{problem}</ErrorNotice>}
       {done && <Notice state="saved">{t("The correction was added.")}</Notice>}
       <div className="hr-actions"><Button type="submit" variant="primary" loading={pending} disabled={pending}>{t("Add correction")}</Button></div>

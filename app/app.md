@@ -121,17 +121,22 @@ skill read that same aggregate.
   `staff_leave_requests` and `staff_claims`: the same columns and the same write rules (filed open, frozen once
   decided), plus `member_id` and a `client_ref` retry key.
 - **Owner or member.** The host pushes no role, and a member's read of an owner-only table is refused 403, which closes
-  the frame. The screen asks once with a `records.batch` of two items under one record id into `leave_withdrawals`:
-  the owner's batch reaches the store and is refused whole (409), so nothing is written; a member may not name a
-  record id there (400). A board without `records.batch` keeps the 0.4.0 owner screen.
-- **Linking.** A member's view starts unlinked. They ask to be linked (`staff_link_requests`: the name they give, an
-  optional employee number, and a code from their account id). The owner checks the code and links them on People →
-  Staff accounts, which writes the account id to the employee record's `member_id` (the authority) and then a
-  `staff_snapshots` row (`snap-` id) naming the employee and the member's leave balances.
+  the frame. The screen asks once with a `records.update` of `viewer-probe` in `leave_withdrawals`: the owner meets
+  the append-only rule (409) and a member is refused `owner_required` (which the board keeps non-fatal for a write),
+  both before any row is read. Any other answer is no role: the screen shows a retry and neither view. A board
+  without `records.update` keeps the 0.4.0 owner screen.
+- **Linking.** A member's view starts unlinked and offers only a link request (`staff_link_requests`: the name they
+  give, an optional employee number, and a code from their account id); that is a screen choice, and the owner's
+  checks are the control. The owner checks the code and links them on People → Staff accounts, which writes the
+  account id to the employee record's `member_id` and then a `staff_snapshots` row (`snap-` id) naming the employee and
+  the member's leave balances. A link counts only when the newest such snapshot for the account names the employee; a
+  `member_id` set before 0.5.0 needs the owner's confirmation first. A linked account can read the owner's notes on its
+  own rows, and keeps what was published to it after unlinking.
 - **Balances.** Members cannot read `leave_entries`. The owner's screen publishes each linked member's balances as a
   snapshot from the same `records.aggregate` the Balances tab reads, on linking, after deciding that member's leave
-  request, and on "Update staff balances". The staff view shows it with its "as of" time. It trusts only snapshot rows
-  whose id the owner's screen named; a member cannot name a record id.
+  request, and on "Update staff balances". The newest is the host's newest row, not the owner device's clock. The staff
+  view shows it with its "as of" time. It trusts only snapshot rows whose id the owner's screen named; a member cannot
+  name a record id.
 - **Decisions.** The owner decides staff rows on the new sub-tabs. Approving first checks that the row's `member_id` is
   the account linked on that employee's record, since a member chooses every other column. A staff leave approval
   goes through the ledger exactly like an owner request. A member withdraws a pending request with a

@@ -21,8 +21,13 @@ const str = (v: unknown) => (typeof v === "string" ? v : "");
 const STATUS_LABEL: Record<string, string> = { pending: "Pending", withdrawn: "Withdrawn", approved: "Approved", rejected: "Rejected", cancelled: "Cancelled", submitted: "Submitted", unknown: "Unknown" };
 const CATEGORY_LABEL: Record<string, string> = { travel: "Travel", meals: "Meals", supplies: "Supplies", other: "Other" };
 const pill = (status: string, t: (s: string) => string) => <span className="chip" data-status={status}>{t(STATUS_LABEL[status] ?? "Unknown")}</span>;
-/** A save that may have landed (no answer, a conflict, the store busy) is never called a failure that saved nothing. */
-const unsure = (e: unknown) => e instanceof Error && "status" in e && [409, 503, 504].includes((e as { status: number }).status);
+/**
+ * A failure that is not the screen's own form check: the board collapses most refusals into one class, and the
+ * read-back by the form's retry key did not answer either, so the row may or may not be saved.
+ */
+const unsure = (e: unknown) => !(e instanceof FormError);
+/** A note under a list the staff view read only in part. */
+const More = ({ more }: { more: boolean }) => { const { t } = useLocale(); return more ? <p className="text-micro text-ink-500">{t("Older entries are not shown here. Ask the owner if you need them.")}</p> : null; };
 
 /**
  * The member's view of HR (0.5.0): My leave, My claims and Clock, phone width first. It reads and files only the
@@ -127,8 +132,8 @@ function BalanceCard({ state, snapshot }: { state: "ready" | "error"; snapshot: 
 function MyLeave({ scope, snapshot }: { scope: HostScope; snapshot: Snapshot & { employeeId: string } }) {
   const { t } = useLocale();
   const mine = useHrLoader(scope, "staff-my-leave", {}, async () => {
-    const [requests, withdrawals] = await Promise.all([listMine(scope, STAFF.leave, { orderBy: "start_date" }), listMine(scope, STAFF.withdrawals, { limit: 100 })]);
-    return { requests, withdrawn: new Set(withdrawals.map((w) => str(p(w).request_id))) };
+    const [requests, withdrawals] = await Promise.all([listMine(scope, STAFF.leave, { orderBy: "start_date", pages: 2 }), listMine(scope, STAFF.withdrawals, { pages: 5 })]);
+    return { requests: requests.records, more: requests.more, withdrawn: new Set(withdrawals.records.map((w) => str(p(w).request_id))), withdrawalsCut: withdrawals.more };
   });
   const blank: Values = { leaveType: snapshot.types[0]?.code ?? "", startDate: "", endDate: "", days: "", reason: "" };
   const [values, setValues] = useState<Values>(blank);
@@ -197,6 +202,7 @@ function MyLeave({ scope, snapshot }: { scope: HostScope; snapshot: Snapshot & {
               </div>
             );
           })}
+        <More more={mine.data?.more === true || mine.data?.withdrawalsCut === true} />
         <p className="text-micro text-ink-500">{t("A decided request cannot be changed. You can withdraw a pending one.")}</p>
       </section>
       {withdrawing && (
@@ -211,7 +217,7 @@ function MyLeave({ scope, snapshot }: { scope: HostScope; snapshot: Snapshot & {
 // ---- my claims -----------------------------------------------------------------------------------------------------
 function MyClaims({ scope, snapshot }: { scope: HostScope; snapshot: Snapshot & { employeeId: string } }) {
   const { t } = useLocale();
-  const mine = useHrLoader(scope, "staff-my-claims", {}, () => listMine(scope, STAFF.claims, { orderBy: "claim_date" }));
+  const mine = useHrLoader(scope, "staff-my-claims", {}, () => listMine(scope, STAFF.claims, { orderBy: "claim_date", pages: 2 }));
   const blank: Values = { category: "travel", claimDate: hkParts(nowS()).date, amount: "", merchant: "", description: "" };
   const [values, setValues] = useState<Values>(blank);
   const [ref, setRef] = useState(() => clientRef("scl"));
@@ -248,8 +254,8 @@ function MyClaims({ scope, snapshot }: { scope: HostScope; snapshot: Snapshot & 
         <h2>{t("My claims")}</h2>
         {mine.loading ? <Loading>{t("Reading your claims…")}</Loading>
           : mine.error !== null && !mine.data ? <ErrorNotice onRetry={() => void mine.store.refresh()}>{t(hostErrorText(mine.failure, "Your claims could not be read."))}</ErrorNotice>
-          : (mine.data ?? []).length === 0 ? <p className="text-label text-ink-400">{t("You have not submitted a claim from here yet.")}</p>
-          : mine.data!.map((r) => {
+          : (mine.data?.records ?? []).length === 0 ? <p className="text-label text-ink-400">{t("You have not submitted a claim from here yet.")}</p>
+          : mine.data!.records.map((r) => {
             const x = p(r), currency = str(x.currency) || "HKD";
             return (
               <div key={r.id} className="hr-staff-row">
@@ -258,6 +264,7 @@ function MyClaims({ scope, snapshot }: { scope: HostScope; snapshot: Snapshot & 
               </div>
             );
           })}
+        <More more={mine.data?.more === true} />
         <p className="text-micro text-ink-500">{t("Only the owner approves claims. A submitted claim cannot be changed.")}</p>
       </section>
     </div>
@@ -272,12 +279,12 @@ function Clock({ scope, snapshot }: { scope: HostScope; snapshot: Snapshot & { e
   const weekStart = useMemo(() => hkWeekStart(nowS()), []);
   const mine = useHrLoader(scope, "staff-my-punches", { weekStart }, async () => {
     const [punches, leave] = await Promise.all([
-      listMine(scope, STAFF.punches, { filters: [{ field: "at", op: "gte", value: weekStart }], orderBy: "at", limit: 100 }),
-      listMine(scope, STAFF.leave, { filters: [{ field: "status", op: "eq", value: "approved" }], orderBy: "start_date", limit: 20 }),
+      listMine(scope, STAFF.punches, { filters: [{ field: "at", op: "gte", value: weekStart }], orderBy: "at", pages: 5 }),
+      listMine(scope, STAFF.leave, { filters: [{ field: "status", op: "eq", value: "approved" }], orderBy: "start_date", limit: 50 }),
     ]);
     return {
-      punches: punches.flatMap((r) => { const x = readPunch(r); return x ? [x] : []; }),
-      leave: leave.map((r) => ({ start: str(p(r).start_date), end: str(p(r).end_date), leaveType: str(p(r).leave_type) })),
+      punches: punches.records.flatMap((r) => { const x = readPunch(r); return x ? [x] : []; }), more: punches.more,
+      leave: leave.records.map((r) => ({ start: str(p(r).start_date), end: str(p(r).end_date), leaveType: str(p(r).leave_type) })),
     };
   });
   const [ref, setRef] = useState(() => clientRef("app"));
@@ -290,6 +297,7 @@ function Clock({ scope, snapshot }: { scope: HostScope; snapshot: Snapshot & { e
     const at = nowS();
     setNow(at); setPending(true); setResult(null);
     void punch(scope, snapshot, direction, at, ref).then(() => { setResult({ kind: "done", direction, at }); setRef(clientRef("app")); void mine.store.refresh(); })
+      // `punch` has already read back by this punch's retry key: a FormError means the read-back answered without it.
       .catch((e: unknown) => { setResult({ kind: unsure(e) ? "unsure" : "fail" }); void mine.store.refresh(); })
       .finally(() => setPending(false));
   };
@@ -316,6 +324,7 @@ function Clock({ scope, snapshot }: { scope: HostScope; snapshot: Snapshot & { e
             <div className="hr-staff-row"><span>{t("Out")}</span><span className="num">{lastOut ? hkParts(lastOut.at).time : "—"}</span></div>
           </>
         )}
+        <More more={mine.data?.more === true} />
         <p className="text-micro text-ink-500">{t("Punches cannot be changed or deleted. If one is wrong or missing, tell the owner to add a correction.")}</p>
       </section>
       <section className="card hr-staff-card" aria-label={t("This week")}>

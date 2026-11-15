@@ -473,6 +473,9 @@ export function PostingsPane({ scope, canWrite }: { scope: HostScope; canWrite: 
       listAll(scope, RUNS, [{ field: "status", op: "eq", value: "approved" }]), listAll(scope, "claims", [{ field: "status", op: "eq", value: "approved" }]),
       listAll(scope, "staff_claims", [{ field: "status", op: "eq", value: "approved" }]), readPostings(scope),
     ]);
+    // A staff claim's `employee_name` is what the member typed: name it from the employee record instead.
+    const names = staffClaims.length === 0 ? new Map<string, string>() : new Map((await listAll(scope, undefined, [])).map((e) => [e.id, s(prof(e).display_name)]));
+    const nameOf = (r: HostRecord, table: string) => (table === "staff_claims" ? names.get(String(prof(r).employee_id ?? "")) ?? t("Unknown employee") : s(prof(r).employee_name));
     const claims = [...ownerClaims.map((r) => ({ r, table: "claims" })), ...staffClaims.map((r) => ({ r, table: "staff_claims" }))];
     const find = (source: string, id: string) => postings.find((r) => prof(r).source === source && prof(r).source_id === id) ?? null;
     const facts = runs.map(toRunFact);
@@ -485,7 +488,7 @@ export function PostingsPane({ scope, canWrite }: { scope: HostScope; canWrite: 
           period: fact.period, runNo: fact.runNo, supersededBy: supersededBy(fact, facts)?.runRef ?? null, postedEarlier: postedEarlier(fact, facts, posted).map((e) => e.runRef),
         };
       }),
-      ...claims.map(({ r, table }) => ({ source: "claim" as const, table, id: r.id, ref: `hr-claim-${r.id}`, label: `${t("Claim")}: ${s(prof(r).employee_name)}, ${s(prof(r).merchant)} ${prof(r).currency ?? ""} ${typeof prof(r).amount_minor === "number" ? fromMinor(prof(r).amount_minor as number, String(prof(r).currency ?? "HKD")) : ""}`, category: String(prof(r).category ?? "other"), posting: find("claim", r.id), period: "", runNo: 0, supersededBy: null, postedEarlier: [] })),
+      ...claims.map(({ r, table }) => ({ source: "claim" as const, table, id: r.id, ref: `hr-claim-${r.id}`, label: `${t("Claim")}: ${nameOf(r, table)}, ${s(prof(r).merchant)} ${prof(r).currency ?? ""} ${typeof prof(r).amount_minor === "number" ? fromMinor(prof(r).amount_minor as number, String(prof(r).currency ?? "HKD")) : ""}`, category: String(prof(r).category ?? "other"), posting: find("claim", r.id), period: "", runNo: 0, supersededBy: null, postedEarlier: [] })),
     ];
     // Runs first, newest month and highest run number first (numbers compared as numbers: run 10 after run 9), then claims.
     return items.sort((a, b) => Number(a.source === "claim") - Number(b.source === "claim") || b.period.localeCompare(a.period) || b.runNo - a.runNo || a.ref.localeCompare(b.ref));

@@ -90,8 +90,9 @@ let memberSeq = 0;
 /** The AOS-564 member gates, before the owner's fixture logic runs. */
 function asMember(verb: string, args: Record<string, unknown>): Record<string, unknown> {
   const names = verb === "records.batch" ? (Array.isArray(args.items) ? args.items.map((i: { table?: unknown }) => (typeof i.table === "string" ? i.table : "employees")) : []) : [table(args)];
+  // A member never updates: the host refuses it `owner_required`, which the board keeps non-fatal for a write.
+  if (verb === "records.update" && names.every((n) => ROW_OWNER.includes(n))) throw new Refused(refusal("owner_required", "Only a workspace owner can perform this action."));
   if (names.some((n) => !ROW_OWNER.includes(n))) throw new Refused(refusal("forbidden", "This app's access is no longer available."));
-  if (verb === "records.update") throw new Refused(refusal("forbidden", "This app's access is no longer available."));
   if (verb === "records.create") {
     if (args.record_id !== undefined) throw failed();
     const profile = args.profile as Record<string, unknown>;
@@ -126,7 +127,7 @@ function call(verb: string, args: Record<string, unknown>): unknown {
       const name = table(args);
       const columns = SEARCH[name] ?? [];
       const order = args.order_by as { field: string; direction?: string } | undefined;
-      const key = (r: SeedRow) => (order ? (r.profile[order.field] as string | number) ?? "" : r.id);
+      const key = (r: SeedRow) => (order?.field === "created_at" ? rowsOf(name).indexOf(r) : order ? (r.profile[order.field] as string | number) ?? "" : r.id);
       const matched = rowsOf(name).filter((r) => mine(r, name) && (!q || columns.some((c) => String(r.profile[c] ?? "").toLowerCase().includes(q))) && filters.every((f) => hit(f, r)))
         .sort((a, b) => (key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0) * (order?.direction === "desc" ? -1 : 1));
       const after = typeof args.cursor === "string" ? matched.findIndex((r) => r.id === args.cursor) + 1 : 0;
@@ -159,6 +160,8 @@ function call(verb: string, args: Record<string, unknown>): unknown {
       return { record: receipt(row) };
     }
     case "records.update": {
+      // The append-only staff tables refuse every update before a row is read (the screen's owner-or-member probe).
+      if (["attendance_punches", "staff_link_requests", "staff_snapshots", "leave_withdrawals"].includes(table(args))) throw new Refused(refusal("conflict", "That changed. Refresh before trying again."));
       const rows = rowsOf(table(args));
       const row = rows.find((r) => r.id === args.record_id);
       if (!row) throw new Refused(refusal("not_found", "That record is not available."));

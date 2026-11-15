@@ -88,10 +88,11 @@ test("the clock button and the week: out after an in today; missing clock-outs a
   ]);
 });
 
-test("the staff view trusts only snapshots the owner's screen named, newest first", () => {
+test("the staff view trusts only snapshots the owner's screen named, in the host's newest-first order", () => {
   const snap = (id: string, asOf: number, over: Record<string, unknown> = {}) => ({ id, profile: { member_id: "usr_amy", employee_id: "emp-amy", employee_name: "Amy Chan", employee_no: "E001", as_of: asOf, leave: D.snapshotLeave([{ code: "ANNUAL", name: "Annual leave" }], [{ leaveType: "ANNUAL", halfDays: 17 }], false), ...over } });
-  expect(D.latestSnapshot([snap("snap-a", 10), snap("snap-b", 20)])!.id).toBe("snap-b");
-  expect(D.latestSnapshot([snap("snap-a", 10), snap("mem_" + "f".repeat(32), 99)])!.id).toBe("snap-a");
+  // Rows arrive newest first by the host's own creation time; the owner device's `as_of` does not reorder them.
+  expect(D.latestSnapshot([snap("snap-b", 10), snap("snap-a", 20)])!.id).toBe("snap-b");
+  expect(D.latestSnapshot([snap("mem_" + "f".repeat(32), 99), snap("snap-a", 10)])!.id).toBe("snap-a");
   expect(D.latestSnapshot([snap("mem_x", 99)])).toBeNull();
   expect(D.latestSnapshot([snap("snap-a", 10, { leave: { v: 2 } })])).toBeNull(); // a shape the screen never writes
   const s = D.latestSnapshot([snap("snap-a", 10)])!;

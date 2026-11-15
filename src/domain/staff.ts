@@ -85,11 +85,14 @@ export function readSnapshot(record: { id: string; profile: unknown }): Snapshot
   }
   return { id: record.id, employeeId: str(p.employee_id), employeeName: str(p.employee_name), employeeNo: str(p.employee_no), asOf, types, balances, truncated: leave?.truncated === true };
 }
-/** The newest snapshot the owner's screen wrote. A row a member filed (a host-named id) is never read as one. */
-export function latestSnapshot(records: readonly { id: string; profile: unknown }[]): Snapshot | null {
-  let best: Snapshot | null = null;
-  for (const r of records) { const s = readSnapshot(r); if (s !== null && (best === null || s.asOf > best.asOf || (s.asOf === best.asOf && s.id > best.id))) best = s; }
-  return best;
+/**
+ * The newest snapshot the owner's screen wrote, from rows in the host's own creation order, newest first
+ * (`order_by: created_at desc`). The owner device's `as_of` clock does not decide which is newest. A row a member
+ * filed (a host-named id) is never read as one.
+ */
+export function latestSnapshot(newestFirst: readonly { id: string; profile: unknown }[]): Snapshot | null {
+  for (const r of newestFirst) { const s = readSnapshot(r); if (s !== null) return s; }
+  return null;
 }
 export const isLinked = (s: Snapshot | null): s is Snapshot & { employeeId: string } => s !== null && s.employeeId !== null;
 

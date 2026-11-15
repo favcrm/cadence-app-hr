@@ -22,7 +22,7 @@ const TAB_LABEL: Record<Section, string> = { people: "People", policies: "Polici
 type ViewerState = { key: string; viewer: Viewer | null; failure: unknown };
 /**
  * Owner or member, asked once per verified scope before any record is read: a member's read of an owner-only table is
- * refused 403 and the board closes the frame. A board that does not offer `records.batch` cannot ask, and keeps the
+ * refused 403 and the board closes the frame. A board that does not offer `records.update` cannot ask, and keeps the
  * owner screen it had before 0.5.0.
  */
 function useViewer(scope: HostScope | null, canAsk: boolean): ViewerState & { retry: () => void } {
@@ -58,7 +58,10 @@ function Body() {
   const [savedNotice, setSavedNotice] = useState(false);
   const detail = snapshot?.route.record_id ?? null;
   const [peopleList, setPeopleList] = useState(0);
-  const who = useViewer(snapshot?.scope ?? null, snapshot?.actions.includes("records.batch") === true);
+  const who = useViewer(snapshot?.scope ?? null, snapshot?.actions.includes("records.update") === true);
+  const sectionNow = snapshot?.route.section ?? "people";
+  // People's sub-view (Directory or Staff accounts) starts at Directory whenever the section changes.
+  useEffect(() => { setPeopleList(0); }, [sectionNow]);
   useEffect(() => { setDismissed(null); }, [detail]);
   useEffect(() => {
     if (snapshot) return;

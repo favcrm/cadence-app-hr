@@ -164,4 +164,9 @@ test("leave-desk and claim-intake know staff-filed rows and never stage into the
   expect(claims).toMatch(/`table: "staff_claims"`/);
   expect(claims).toMatch(/Never stage a create or an update on `staff_claims`/);
   expect(posting).toMatch(/`table: "staff_claims"`/);
+  for (const text of [leave, claims]) {
+    expect(text).toMatch(/including `employee_name`: name the employee from the employee record/);
+    expect(text).toMatch(/not filed from the account linked to that employee/);
+  }
+  expect(leave).toMatch(/\{"field": "member_id", "op": "eq", "value": "<the request's member_id>"\}/);
 });

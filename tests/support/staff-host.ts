@@ -9,7 +9,7 @@
 // - a member's batch must target only `row_owner` tables, or it takes the owner-only path and is refused whole.
 //
 // Every store is shared, so one test can act as the owner and as two members on the same rows. `closed` records the
-// first 403 a viewer met: the board closes a screen's frame on it.
+// first frame-fatal 403 a viewer met: the board closes a screen's frame on it (an `owner_required` write is not one).
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { ApiError } from "./sdk-mock.mjs";
@@ -37,8 +37,12 @@ export function makeStaffHost() {
   const calls: Call[] = [];
   const closed = new Map<string, string>();
   let seq = 0;
-  const faults: { verb: string; table?: string; viewer?: string; error: ApiError; after: boolean; done: boolean }[] = [];
-  const fault = (verb: string, error: ApiError, opts: { table?: string; viewer?: string; after?: boolean } = {}) => { faults.push({ verb, error, table: opts.table, viewer: opts.viewer, after: opts.after ?? false, done: false }); };
+  /**
+   * A host answer by default (it goes through the board's collapse like any other); `frame: true` is what the frame sees
+   * directly, such as app-kit's own timeout when no reply comes.
+   */
+  const faults: { verb: string; table?: string; viewer?: string; error: ApiError; after: boolean; frame: boolean; done: boolean }[] = [];
+  const fault = (verb: string, error: ApiError, opts: { table?: string; viewer?: string; after?: boolean; frame?: boolean } = {}) => { faults.push({ verb, error, table: opts.table, viewer: opts.viewer, after: opts.after ?? false, frame: opts.frame ?? false, done: false }); };
   const fail = (status: number, code: string) => new ApiError(code, status, { code });
   const rows = (name: string) => { const t = tables[name]; if (!t) throw fail(400, "validation_failed"); return t; };
   const rule = (table: string, operation: string, before: Record<string, any> | null, after: Record<string, any>) => {
@@ -93,7 +97,12 @@ export function makeStaffHost() {
           case "records.list": {
             gate(table);
             let all = rows(table).filter((r) => mine(table, r) && (args.filters ?? []).every((f: any) => matches(r, f)));
-            if (args.order_by) { const { field, direction } = args.order_by; all = [...all].sort((a, b) => (a.profile[field] < b.profile[field] ? -1 : a.profile[field] > b.profile[field] ? 1 : 0) * (direction === "desc" ? -1 : 1)); }
+            if (args.order_by) {
+              // `created_at` is the host's own column: insertion order here, as the host's write order.
+              const { field, direction } = args.order_by;
+              const key = (r: Row) => (field === "created_at" ? rows(table).indexOf(r) : r.profile[field]);
+              all = [...all].sort((a, b) => (key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0) * (direction === "desc" ? -1 : 1));
+            }
             const limit = args.limit ?? 25;
             const start = args.cursor ? all.findIndex((r) => r.id === args.cursor) + 1 : 0;
             const page = all.slice(start, start + limit);
@@ -135,9 +144,10 @@ export function makeStaffHost() {
           case "records.update": {
             if (isMember && owned(table)) throw fail(403, "owner_required");
             gate(table);
+            // The host refuses an update of an append-only table before the transaction reads any row.
+            if (options(table).append_only) throw fail(409, "append_only");
             const row = rows(table).find((r) => r.id === args.record_id);
             if (!row) throw fail(404, "record_not_found");
-            if (options(table).append_only) throw fail(409, "append_only");
             if (row.revision !== args.expected_revision) throw fail(409, "revision_conflict");
             const after = { ...row.profile, ...args.profile };
             rule(table, "update", row.profile, after);
@@ -172,13 +182,32 @@ export function makeStaffHost() {
         if (hit?.after) throw hit.error;
         return result;
       } catch (error) {
-        if (error instanceof ApiError) { call.status = error.status; if (error.status === 403 && !closed.has(who)) closed.set(who, `${verb} ${table}`); }
-        throw error;
+        if (!(error instanceof ApiError)) throw error;
+        call.status = error.status;
+        if (hit?.frame && error === hit.error) throw error;
+        const seen = board(verb, error);
+        (seen as unknown as { hostError: ApiError }).hostError = error;
+        if (seen.status === 403 && !closed.has(who)) closed.set(who, `${verb} ${table}`);
+        throw seen;
       }
     };
   }
+  /**
+   * What the frame sees of a host refusal (Cadence `screenServices.ts` on origin/main, app-kit's REFUSAL_STATUS): 401,
+   * 404, 409 and 503 keep their class; a 403 `owner_required` on a write is kept non-fatal as code `owner_required`
+   * (app-kit status 400); any other 403 closes the frame; every other status (400, 413, 429, other 5xx) is `failed`, 400.
+   */
+  function board(verb: string, error: ApiError): ApiError {
+    const write = ["records.create", "records.update", "records.batch"].includes(verb);
+    if (error.status === 403 && write && error.code === "owner_required") return new ApiError("Only a workspace owner can perform this action.", 400, { code: "owner_required" });
+    const code = ({ 401: "unauthorized", 403: "forbidden", 404: "not_found", 409: "conflict", 503: "unavailable" } as Record<number, string>)[error.status];
+    return code ? new ApiError(code, error.status, { code }) : new ApiError("failed", 400, { code: "failed" });
+  }
   const add = (name: string, id: string, profile: Record<string, any>) => { rows(name).push({ id, revision: 1, profile: stored(name, profile) }); };
-  const raw = (viewer: Viewer) => (verb: string, args: Record<string, unknown>) => callFor(viewer)(scope, verb, args);
+  /** A crafted request straight to the host (its own refusal codes), bypassing the board's collapse. */
+  const raw = (viewer: Viewer) => async (verb: string, args: Record<string, unknown>) => {
+    try { return await callFor(viewer)(scope, verb, args); } catch (error) { throw (error as { hostError?: ApiError }).hostError ?? error; }
+  };
   return { as: actionsFor, raw, tables, calls, closed, fault, add, of: (name: string) => rows(name) };
 }
 export const person = (no: string, over: Record<string, any> = {}) => ({ display_name: `Person ${no}`, employee_no: no, join_date: "2020-01-01", leave_date: null, status: "active", ...over });
