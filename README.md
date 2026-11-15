@@ -96,7 +96,10 @@ type. Approving a request deducts leave, an accrual run adds it, and a correctio
   ever updated; a mistake is corrected by another adjustment.
 - **Balances.** The Balances list, the employee detail and the balance beside a new request all come from one
   `records.aggregate` grouped by `employee_id` and `leave_type`, with the moment of the read. A truncated answer is
-  said to be cut short and a person missing from it is not shown as zero; a failed read shows no figure. A request that
+  said to be cut short and a person missing from it is not shown as zero; a failed read shows no figure. A complete
+  answer with no group for the employee and leave type says no leave has been recorded, never "0 days", here as on
+  the employee's balances and in `leave-desk` (a test reads the skill and checks it calls the same aggregate and
+  prints half-days the same way). A request that
   would take the balance below zero shows a warning and is still saved. The balance includes entries dated in the future
   (approved leave not yet taken). `leave-desk` states a balance only from the same aggregate, with its as-of moment.
 - **Known limits.** If a request is rejected or changed from another session between the screen's re-read and its status
@@ -268,8 +271,8 @@ and ask for typed details when the text or the picture is not readable.
 
 ## Evaluation set
 
-`tests/eval/` holds 10 policy questions (with expected citations and four decline cases), 5 leave requests, 5
-receipts and 5 CVs (with protected-attribute and prompt-injection bait), all synthetic, plus deterministic graders
+`tests/eval/` holds 10 policy questions (with expected citations and four decline cases), 5 leave requests, 5 leave
+balance questions (a figure, a negative, no entries, a cut-short and a failed read), 5 receipts and 5 CVs (with protected-attribute and prompt-injection bait), all synthetic, plus deterministic graders
 and golden outputs. The graders judge recorded outputs. No model has been run on the set: every graded output is
 hand-written. `eval.test.mjs` checks that the golden outputs and other correct answers pass and that wrong ones fail.
 

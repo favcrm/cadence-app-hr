@@ -470,6 +470,37 @@ test("the screen never updates a ledger entry anywhere in its source", async () 
   }
 });
 
+// ---- the screen, the skill and the agent agree --------------------------------------------------------------------
+test("leave-desk tells the agent to call the same aggregate the screen calls, and prints half-days as the screen does", async () => {
+  const { readFileSync } = await import("node:fs");
+  const read = (p: string) => readFileSync(new URL(`../../app/skills/leave-desk/${p}`, import.meta.url), "utf8");
+  const skill = read("SKILL.md"), reference = read("references/leave-balances.md");
+  const host = makeHost();
+  host.calls.length = 0;
+  await G.readBalances(scope, G.forEmployee("emp-aaa"), host.actions);
+  const call = host.calls.find((c) => c.verb === "records.aggregate")!;
+  // What each document tells the agent to send, read from its text.
+  const told = (text: string) => ({
+    verb: /records\.aggregate/.test(text) ? "records.aggregate" : null,
+    table: /table: "([a-z_]+)"/.exec(text.slice(text.indexOf("records.aggregate")))?.[1],
+    group_by: JSON.parse(/group_by: (\[[^\]]*\])/.exec(text)![1]!),
+    sum: JSON.parse(/sum: (\[[^\]]*\])/.exec(text)![1]!),
+    filter: /\{"field": "([a-z_]+)", "op": "eq", "value": "<employee record id>"\}/.exec(text)?.[1],
+  });
+  for (const text of [skill.slice(skill.indexOf("## Balances")), reference]) {
+    expect(told(text)).toEqual({ verb: call.verb, table: call.args.table, group_by: call.args.group_by, sum: call.args.sum, filter: call.args.filters[0].field });
+  }
+  // The half-day table matches the screen's own conversion, row by row.
+  const rows = [...reference.matchAll(/^\| (-?\d+) \| (-?[\d.]+) \|$/gm)];
+  expect(rows.length).toBeGreaterThanOrEqual(5);
+  for (const [, half, days] of rows) expect([half, L.signedDays(Number(half))]).toEqual([half, days]);
+  // The sign of each kind is the one the host's write schema enforces.
+  const kinds = [...reference.matchAll(/^\| `([a-z_]+)` \| (\+ or -|\+|-) \|/gm)].map((m) => [m[1], m[2]]);
+  expect(kinds).toEqual([["accrual", "+"], ["taken", "-"], ["adjustment", "+ or -"], ["carry_forward", "+"], ["expiry", "-"]]);
+  // No group is "no leave recorded", never 0, in the skill as on the screen.
+  expect(skill).toMatch(/no group for the employee and leave type, say no leave has been recorded for them yet\. Do not say 0/);
+});
+
 test("a ledger refusal on the adjustment form is shown, not dropped", async () => {
   const { renderToStaticMarkup } = await import("react-dom/server");
   const { createElement } = await import("react");

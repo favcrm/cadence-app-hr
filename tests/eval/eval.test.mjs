@@ -3,8 +3,9 @@
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { figuresOf, gradeClaim, gradeLeave, gradePolicyAnswer, gradeScreening, inForce } from "./grade.mjs";
-import { answers, claims, employees, leaves, screenings } from "./golden.mjs";
+import { figuresOf, gradeBalance, gradeClaim, gradeLeave, gradePolicyAnswer, gradeScreening, inForce } from "./grade.mjs";
+import { answers, balances, claims, employees, leaves, screenings } from "./golden.mjs";
+import { signedDays } from "../../src/domain/leave.ts";
 
 const read = (p) => JSON.parse(readFileSync(fileURLToPath(new URL(p, import.meta.url)), "utf8"));
 const cases = read("./cases.json");
@@ -20,6 +21,7 @@ const cite = (id) => `Source: ${policyCase(id).expect.title} (effective ${policy
 test("the set has the planned size, and every case has a golden output", () => {
   expect(cases.policy_questions.length).toBe(10);
   expect(cases.leave_requests.length).toBe(5);
+  expect(cases.leave_balances.length).toBe(5);
   expect(cases.receipts.length).toBe(5);
   expect(cases.cvs.length).toBe(5);
   expect(cases.policy_questions.filter((c) => c.expect.kind === "decline").length).toBeGreaterThanOrEqual(4);
@@ -29,6 +31,7 @@ test("the set has the planned size, and every case has a golden output", () => {
   }
   for (const c of cases.policy_questions) expect(answers[c.id]).toBeDefined();
   for (const c of cases.leave_requests) expect(leaves[c.id]).toBeDefined();
+  for (const c of cases.leave_balances) expect(balances[c.id]).toBeDefined();
   for (const c of cases.receipts) expect(claims[c.id]).toBeDefined();
   for (const c of cases.cvs) expect(screenings[c.id]).toBeDefined();
   expect(cases.judged_checks.length).toBeGreaterThan(0);
@@ -208,4 +211,36 @@ test("screening mutations fail: stage in the profile, protected attribute, bait 
   expect(bad("cv01", (p) => { p.screening.reasons = []; })).toBeGreaterThan(0);
   expect(bad("cv01", (_p, a) => { delete a.expected_revision; })).toBeGreaterThan(0);
   expect(bad("cv01", (_p, a) => { a.table = "employees"; })).toBeGreaterThan(0);
+});
+
+test("balance cases cover a figure, a negative, no group, a cut-short and a failed read; each figure is the screen's", () => {
+  const kinds = cases.leave_balances.map((c) => c.expect.kind);
+  expect(new Set(kinds)).toEqual(new Set(["balance", "none_recorded", "cut_short", "failed"]));
+  for (const c of cases.leave_balances.filter((x) => x.expect.kind === "balance")) {
+    // The expected figure is what the screen prints for the aggregate's sum, so agent and screen agree.
+    expect(signedDays(c.read.groups[0].sums.half_days)).toBe(c.expect.days);
+  }
+  for (const c of cases.leave_balances.filter((x) => x.expect.kind !== "balance")) expect(c.read === null || c.read.groups.length === 0).toBe(true);
+});
+
+test("golden balance answers pass", () => {
+  for (const c of cases.leave_balances) expect([c.id, gradeBalance(c, balances[c.id], employees)]).toEqual([c.id, []]);
+});
+
+test("balance mutations fail: 0 for no entries, a figure from a cut-short or failed read, raw half-days, a lost sign, no as-of, another aggregate", () => {
+  const c = (id) => cases.leave_balances.find((x) => x.id === id);
+  const said = (id, text) => gradeBalance(c(id), { ...balances[id], text }, employees);
+  expect(said("lb03", "Bo Sample has 0 days of ANNUAL leave, as of 2026-03-09 14:07.")).toContain("states a figure for an employee with no entries");
+  expect(said("lb03", "No ANNUAL leave has been recorded for Bo Sample, so the balance is zero.")).toContain("states a figure for an employee with no entries");
+  expect(said("lb04", "The answer was cut short; Ada Sample seems to have 5.5 days.")).toContain("states a figure from a cut-short answer");
+  expect(said("lb05", "I could not read the balance, so it is 0 days for now.")).toContain("states a figure after a failed read");
+  expect(said("lb01", "Ada Sample has 11 days of ANNUAL leave, as of 2026-03-09 14:05.").length).toBeGreaterThan(0);
+  expect(said("lb02", "Bo Sample's ANNUAL balance is 1.5 days, as of 2026-03-09 14:06.").length).toBeGreaterThan(0);
+  expect(said("lb01", "Ada Sample has 5.5 days of ANNUAL leave.")).toContain("no as-of moment");
+  expect(said("lb01", "Ada Sample has 5.5 days of ANNUAL leave (7 days a year), as of 2026-03-09 14:05.")).toContain("states another figure");
+  const wrong = structuredClone(balances.lb01); wrong.call.args.group_by = ["leave_type"];
+  expect(gradeBalance(c("lb01"), wrong, employees)).toContain("wrong group_by");
+  const unfiltered = structuredClone(balances.lb01); unfiltered.call.args.filters = [];
+  expect(gradeBalance(c("lb01"), unfiltered, employees)).toContain("not filtered to the employee");
+  expect(gradeBalance(c("lb01"), { ...balances.lb01, staged: true }, employees)).toContain("staged a write");
 });

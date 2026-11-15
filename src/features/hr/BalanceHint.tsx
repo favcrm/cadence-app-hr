@@ -1,6 +1,6 @@
 import { Notice } from "@cadence/screen-ui";
 import { useEffect, useState } from "react";
-import { balanceAfter, signedDays, type Balances } from "../../domain/leave";
+import { balanceHintView, signedDays, type Balances } from "../../domain/leave";
 import { toHalfDays, type Values } from "../../domain/records";
 import type { HostScope } from "./hostActions";
 import { readRequestBalance } from "./ledger";
@@ -9,7 +9,7 @@ import { useLocale } from "./locale";
 type State =
   | { status: "idle" }
   | { status: "reading" }
-  | { status: "ready"; employeeId: string; balances: Balances; halfDays: number | null }
+  | { status: "ready"; employeeId: string; balances: Balances }
   | { status: "error" };
 const UCODE = /^[A-Z0-9_-]{1,32}$/;
 
@@ -30,7 +30,7 @@ export default function BalanceHint({ scope, values }: { scope: HostScope; value
     setState({ status: "reading" });
     const timer = setTimeout(() => {
       readRequestBalance(scope, employeeNo, leaveType).then(
-        (r) => { if (live) setState({ status: "ready", employeeId: r.employeeId, balances: r.balances, halfDays: r.halfDays }); },
+        (r) => { if (live) setState({ status: "ready", employeeId: r.employeeId, balances: r.balances }); },
         // An unknown employee or leave type is the form's own check to report; the hint stays quiet and shows no figure.
         () => { if (live) setState({ status: "error" }); },
       );
@@ -41,18 +41,16 @@ export default function BalanceHint({ scope, values }: { scope: HostScope; value
   if (!ready || state.status === "idle") return null;
   if (state.status === "reading") return <p className="text-label text-ink-400" role="status">{t("Reading the leave balance…")}</p>;
   if (state.status === "error") return <p className="text-label text-ink-400" role="status">{t("The leave balance could not be read, so none is shown. You can still save the request.")}</p>;
-  const requested = toHalfDays(values.days ?? "");
-  const after = balanceAfter(state.balances, state.employeeId, leaveType, requested);
+  const view = balanceHintView(state.balances, state.employeeId, leaveType, toHalfDays(values.days ?? ""));
   const asOf = formatDate(Date.parse(state.balances.asOf), { dateStyle: "medium", timeStyle: "short" });
-  const have = state.halfDays;
-  const incomplete = state.halfDays === null && state.balances.truncated;
+  const after = view.kind === "cut_short" ? null : view.after;
+  // Never "0 days" for someone with no entries: like their own balances and the leave-desk skill, say none is recorded.
   return (
     <div className="grid gap-1" data-balance-hint>
       <p className="text-label" role="status">
-        {incomplete
-          ? t("The balance could not be worked out because the host's answer was cut short.")
-          : t("Current balance: {days} days (as of {time}).").replace("{days}", signedDays(have ?? 0)).replace("{time}", asOf)}
-        {!incomplete && have === null && <> {t("No leave has been recorded for this employee and leave type yet.")}</>}
+        {view.kind === "cut_short" && t("The balance could not be worked out because the host's answer was cut short.")}
+        {view.kind === "none_recorded" && t("No leave has been recorded for this employee and leave type yet (as of {time}).").replace("{time}", asOf)}
+        {view.kind === "balance" && t("Current balance: {days} days (as of {time}).").replace("{days}", signedDays(view.halfDays)).replace("{time}", asOf)}
         {after !== null && <> {t("After this request: {days} days.").replace("{days}", signedDays(after))}</>}
       </p>
       {after !== null && after < 0 && (

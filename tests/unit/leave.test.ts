@@ -197,3 +197,15 @@ test("the reversal of a stored taken entry gives its half-days back under a ref 
   }
   expect(L.reversalEntry("lv-1", null).ok).toBe(false);
 });
+
+test("the balance next to a request: no group in a complete answer is 'none recorded', never 0", () => {
+  const asOf = "2026-03-09T01:02:03.000Z";
+  const complete: L.Balances = { groups: [], truncated: false, asOf };
+  expect(L.balanceHintView(complete, "emp-a", "ANNUAL", 4)).toEqual({ kind: "none_recorded", after: -4 });
+  expect(L.balanceHintView(complete, "emp-a", "ANNUAL", null)).toEqual({ kind: "none_recorded", after: null });
+  expect(L.balanceHintView({ ...complete, truncated: true }, "emp-a", "ANNUAL", 4)).toEqual({ kind: "cut_short" });
+  const some: L.Balances = { groups: [{ employeeId: "emp-a", leaveType: "ANNUAL", halfDays: 11, entries: 2 }], truncated: true, asOf };
+  expect(L.balanceHintView(some, "emp-a", "ANNUAL", 3)).toEqual({ kind: "balance", halfDays: 11, after: 8 });
+  // A group of 0 (entries that cancel out) is a real balance of 0, and is shown as one.
+  expect(L.balanceHintView({ ...some, groups: [{ ...some.groups[0]!, halfDays: 0 }] }, "emp-a", "ANNUAL", null)).toEqual({ kind: "balance", halfDays: 0, after: null });
+});

@@ -156,7 +156,7 @@ export const zhHK: Record<string, string> = {
   "The leave balance could not be read, so none is shown. You can still save the request.": "未能讀取假期餘額，因此不顯示。你仍可儲存此申請。",
   "The balance could not be worked out because the host's answer was cut short.": "主機的回覆不完整，因此未能得出餘額。",
   "Current balance: {days} days (as of {time}).": "目前餘額：{days} 日（截至 {time}）。",
-  "No leave has been recorded for this employee and leave type yet.": "此員工的這個假期類別暫時沒有任何記錄。",
+  "No leave has been recorded for this employee and leave type yet (as of {time}).": "此員工的這個假期類別暫時沒有任何記錄（截至 {time}）。",
   "After this request: {days} days.": "此申請之後：{days} 日。",
   "This request would take the balance below zero. You can still save it; the owner decides.": "此申請會令餘額低於零。你仍可儲存，由擁有者決定。",
   "Leave balances": "假期餘額",
