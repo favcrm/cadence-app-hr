@@ -69,16 +69,25 @@ type. Approving a request deducts leave, an accrual run adds it, and a correctio
   its `taken` entry (minus its half-days, dated its first day; a request across a month boundary is one entry in the
   month it starts), and only then sets the request approved. A conflict, a store refusal (the deployed host answers a
   unique key with 503) or a timeout on the entry counts as "already recorded" only after a re-read by `source_ref`
-  finds the same entry; a different entry under that key, or none, stops. Rejecting writes no entry, and is refused
-  if an earlier approval already wrote the entry, because the deduction would otherwise stand for a rejected request:
-  approve again to finish.
+  finds the same entry; a different entry under that key, or none, stops.
+- **Reject.** Rejecting re-reads the request the same way (still pending, at the revision shown). With no `taken`
+  entry it writes nothing to the ledger. If an approval stopped after its entry (the status update failed), rejecting
+  first writes a compensating `adjustment`: the stored entry's half-days back, same employee, leave type and date,
+  `source_ref` `reversal-taken-<request id>` and a note naming the request, retry-safe by the same re-read and
+  same-entry check. Only then is the request set rejected. If that status update fails too, rejecting again finishes
+  with one reversal; approving is refused while a reversal exists, since it would leave an approved request with
+  nothing deducted.
+- **Editing a request.** The screen refuses to edit a pending request while its `taken` entry exists ("finish the
+  approval first", or with a reversal, "finish the rejection first"): the entry was made from the request as it was,
+  and an edit would leave the two out of step.
 - **Run accrual** (Leave → Balances, owner). Pick a month (`YYYY-MM`, not after the current month), review (nothing is
-  written), then post. It reads employees, leave types and the month's existing refs (`prefix` `accrual-` plus
-  `contains` `-<month>`, paged to the end; a read that fails or does not finish stops, it is never read as "none") and
-  posts only the missing entries with `records.batch`. Chunks hold at most 200 items and 16,384 bytes of arguments:
+  written), then post. It reads employees and leave types, plans the month's refs, and looks those exact refs up in
+  the ledger (`source_ref` `in`, 50 at a time; a read that fails or does not finish stops, it is never read as
+  "none"). It posts only the missing entries with `records.batch`. Chunks hold at most 200 items and 16,384 bytes of arguments:
   the receiver allows 49,152, but a board without the CAD-2263 limit closes the frame above 16,384, and the limit
-  is not in a released board yet. A chunk is all or nothing. A chunk refused for a duplicate key is re-read and its
-  missing entries posted once; a stopped run reports how many are in and running it again continues. Running it twice
+  is not in a released board yet. A chunk is all or nothing. A chunk refused for a duplicate key is re-read: an entry
+  already there counts as recorded only when it is the same entry (a different one under the ref stops the run), and
+  the missing entries are posted once; a stopped run reports how many are in and running it again continues. Running it twice
   yields one entry each.
 - **Record earlier approvals** (Leave → Balances, owner). Finds every approved request without a `taken` entry,
   whenever and however it was approved (before 0.3.0, or from a chat-staged approval, which skips the screen) and posts
@@ -91,7 +100,14 @@ type. Approving a request deducts leave, an accrual run adds it, and a correctio
   would take the balance below zero shows a warning and is still saved. The balance includes entries dated in the future
   (approved leave not yet taken). `leave-desk` states a balance only from the same aggregate, with its as-of moment.
 - **Known limits.** If a request is rejected or changed from another session between the screen's re-read and its status
-  update, a `taken` entry can exist for a request that did not end approved; correct it with an adjustment. Employee
+  update, a `taken` entry can exist for a request that did not end approved; correct it with an adjustment. The edit
+  refusal is the screen's: the host's write rule lets a staged chat edit change a pending request that has a `taken`
+  entry (approve then meets a different entry and stops; reject reverses the stored entry). A chat-staged approval is
+  not refused by the host either (the `leave_requests` rule allows pending to approved): it writes no `taken` entry, so
+  the balance is unchanged until the owner runs "Record earlier approvals"; `leave-desk` tells the agent never to
+  stage a status change and to send the owner to the screen instead. A request approved from the chat after a
+  rejection reversed its entry stays at a net zero ("Record earlier approvals" sees its `taken` entry and leaves it
+  alone); correct it with an adjustment. Employee
   ids are the record ids; an employee deleted later keeps their entries. Balances list names from one read of up to
   5,000 employees.
 - **Checker pin.** CI checks the bundle with Cadence v0.3.23-beta.1 (the first checker that knows the two operations;

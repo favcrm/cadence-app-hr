@@ -26,6 +26,8 @@ export default function RecordForm({ spec, formId, initial, problem, onSubmit, a
   const set = (key: string, value: string) => { setValues((prev) => ({ ...prev, [key]: value })); setLocal(null); };
   const shown = local ?? problem;
   const err = (key: string) => (shown?.field === key ? shown.message : undefined);
+  // A problem that belongs to no field on this form (a ledger refusal, say) is shown for the whole form, never dropped.
+  const formWide = shown !== null && !spec.fields.some((f) => f.key === shown.field);
   const control = (f: Spec, c: { id: string }) => {
     const id = c.id;
     if (f.kind === "code") {
@@ -55,7 +57,7 @@ export default function RecordForm({ spec, formId, initial, problem, onSubmit, a
         );
       })}
       {aside?.(values)}
-      {shown && shown.field === null && <ErrorNotice bare>{shown.message}</ErrorNotice>}
+      {shown && formWide && <ErrorNotice bare>{shown.message}</ErrorNotice>}
       {children}
     </form>
   );

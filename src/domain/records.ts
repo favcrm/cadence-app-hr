@@ -33,7 +33,8 @@ export type Values = Record<string, string>;
 
 /** A validation problem the owner can fix. `message` is the English key the screen translates. */
 export class FormError extends Error {
-  constructor(readonly field: string, message: string) { super(message); this.name = "FormError"; }
+  /** The form field the error belongs to, or null for an error about the whole form (shown above its actions). */
+  constructor(readonly field: string | null, message: string) { super(message); this.name = "FormError"; }
 }
 
 export const POLICY_CATEGORIES = ["benefits", "leave", "claims", "attendance", "general"] as const;

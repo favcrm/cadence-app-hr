@@ -4,7 +4,7 @@ import {
   type Decision, type Failure, type ListFn, type TableSpec, type Values,
 } from "../../domain/records";
 import { loadStarterLeaveTypes, STARTER_LEAVE_TYPES, type StarterPort } from "../../domain/leave-starter";
-import { approveLeave, rejectLeave } from "./ledger";
+import { approveLeave, assertNoUnfinishedDecision, rejectLeave } from "./ledger";
 import { hostActions, type HostActions, type HostRecord, type HostScope } from "./hostActions";
 import { FORBIDDEN_TEXT, SESSION_EXPIRED_TEXT } from "./hostErrors";
 
@@ -29,7 +29,8 @@ export async function createRecord(scope: HostScope, spec: TableSpec, recordId: 
 }
 /**
  * An update names the revision it was read at and carries only what changed. A changed leave type is looked up
- * first; a leave type's own code is fixed at creation, so an edit never sends it.
+ * first; a leave type's own code is fixed at creation, so an edit never sends it. A leave request whose approval or
+ * rejection stopped after writing to the ledger is not edited: the decision is finished first.
  */
 export async function updateRecord(scope: HostScope, spec: TableSpec, record: HostRecord, values: Values, actions: HostActions = hostActions) {
   const next = buildProfile(editable(spec), values);
@@ -37,6 +38,7 @@ export async function updateRecord(scope: HostScope, spec: TableSpec, record: Ho
   const patch = changedFields(record.profile, next);
   if (Object.keys(patch).length === 0) return null;
   if ("leave_type" in patch) await assertLeaveTypeExists(listFor(scope, actions), String(patch.leave_type));
+  if (spec.table === "leave_requests") await assertNoUnfinishedDecision(scope, record.id, actions);
   return actions.update(scope, record.id, record.revision, patch, spec.table);
 }
 /**

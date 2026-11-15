@@ -184,3 +184,16 @@ test("batches are chunked within 200 items and the byte limit, in order, with no
   expect(() => L.chunkBatch(one, 200, bytes({ items: one }) - 1)).toThrow(RangeError);
   expect(L.chunkBatch([])).toEqual([]);
 });
+
+test("the reversal of a stored taken entry gives its half-days back under a ref derived from the request", () => {
+  const stored = { employee_id: "emp-aaa", leave_type: "ANNUAL", half_days: -4, kind: "taken", effective_date: "2026-03-02", source_ref: "taken-lv-1", note: null };
+  const built = L.reversalEntry("lv-1", stored);
+  expect(built).toEqual({ ok: true, entry: { employee_id: "emp-aaa", leave_type: "ANNUAL", half_days: 4, kind: "adjustment", effective_date: "2026-03-02", source_ref: "reversal-taken-lv-1", note: expect.stringContaining("lv-1") } });
+  expect(L.reversalRef("lv-1")).toBe("reversal-taken-lv-1");
+  if (built.ok) expect(L.sameEntry(built.entry, built.entry)).toBe(true);
+  // Anything that is not this request's taken entry is refused, never guessed.
+  for (const bad of [{ kind: "adjustment" }, { source_ref: "taken-lv-2" }, { half_days: 4 }, { half_days: 0 }, { half_days: -1.5 }, { employee_id: "" }, { leave_type: "annual" }, { effective_date: "2026-02-30" }]) {
+    expect(L.reversalEntry("lv-1", { ...stored, ...bad }).ok).toBe(false);
+  }
+  expect(L.reversalEntry("lv-1", null).ok).toBe(false);
+});

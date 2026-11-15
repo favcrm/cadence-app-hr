@@ -157,6 +157,8 @@ export function skipReason(employee: EmployeeFacts, month: string): SkipReason |
 
 export const accrualRef = (employeeId: string, leaveType: string, month: string): string => `accrual-${employeeId}-${leaveType}-${month}`;
 export const takenRef = (requestId: string): string => `taken-${requestId}`;
+/** The ref of the entry that cancels a request's `taken` entry when the request is rejected after it was written. */
+export const reversalRef = (requestId: string): string => `reversal-${takenRef(requestId)}`;
 
 /** The half-days a (readable) rule gives an eligible employee for the month: tier by years completed at the month's end. */
 export function accrualHalfDays(tiers: readonly RuleTier[], joinDate: string, month: string): number {
@@ -229,6 +231,21 @@ export function takenEntry(request: { id: string; profile: unknown }): EntryResu
 /** An owner's correction: a new `adjustment` entry with a required note. `ref` is chosen once per open form, so a retry meets its own entry. */
 export function adjustmentEntry(input: { employeeId: string; leaveType: string; halfDays: number; effectiveDate: string; note: string; ref: string }): LedgerEntry {
   return { employee_id: input.employeeId, leave_type: input.leaveType, half_days: input.halfDays, kind: "adjustment", effective_date: input.effectiveDate, source_ref: input.ref, note: input.note };
+}
+/**
+ * The entry that cancels a stored `taken` entry: an `adjustment` of the same employee, leave type and date, plus the
+ * half-days the stored entry took (the stored values, not the request's: the request may have changed since). Its
+ * `source_ref` is derived from the request id, so a retry meets the same unique key. A stored entry that is not a
+ * valid `taken` entry for this request is refused, never guessed.
+ */
+export function reversalEntry(requestId: string, stored: unknown): EntryResult {
+  const employee = col(stored, "employee_id"), type = col(stored, "leave_type"), half = col(stored, "half_days"), date = col(stored, "effective_date");
+  const ref = reversalRef(requestId);
+  const valid = col(stored, "kind") === "taken" && col(stored, "source_ref") === takenRef(requestId)
+    && typeof employee === "string" && EMPLOYEE_ID.test(employee) && typeof type === "string" && LEAVE_CODE.test(type)
+    && Number.isSafeInteger(half) && (half as number) < 0 && typeof date === "string" && realDate(date) && SOURCE_REF.test(ref);
+  if (!valid) return { ok: false, reason: "The leave entry this request recorded is not in the expected form, so it was not reversed. Correct the balance with an adjustment instead." };
+  return { ok: true, entry: { employee_id: employee, leave_type: type, half_days: -(half as number), kind: "adjustment", effective_date: date, source_ref: ref, note: `Reverses the leave taken by request ${requestId}, which was rejected after its entry was recorded.` } };
 }
 /** True when a stored entry is the one this request would write, so a lost reply is not read as a different entry. */
 export function sameEntry(stored: unknown, entry: LedgerEntry): boolean {

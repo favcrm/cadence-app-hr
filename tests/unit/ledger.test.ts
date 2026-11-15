@@ -58,7 +58,9 @@ test("rejecting writes no entry and does not read the ledger for anything but th
   const host = withRequest();
   const done = await reject(host);
   expect(done.profile).toMatchObject({ status: "rejected", decision_note: "No cover" });
-  expect(host.verbs().filter((v) => v === "records.create" || v === "records.batch")).toEqual([]);
+  // A fresh read of the request, one exact read of its taken ref, the status.
+  expect(host.verbs()).toEqual(["records.show", "records.list", "records.update"]);
+  expect(host.calls[1]!.args).toMatchObject({ table: "leave_entries", filters: [{ field: "source_ref", op: "eq", value: "taken-lv-1" }] });
   expect(entries(host)).toEqual([]);
   expect((await G.readBalances(scope, [], host.actions)).groups).toEqual([]);
 });
@@ -67,7 +69,7 @@ test("approving the same request twice produces one entry: the second attempt is
   const host = withRequest();
   const first = stored(host);
   await approve(host, first);
-  await expect(approve(host, first)).rejects.toMatchObject({ field: "ledger", message: "This request is no longer pending. Reload it to see what happened." });
+  await expect(approve(host, first)).rejects.toMatchObject({ field: null, message: "This request is no longer pending. Reload it to see what happened." });
   expect(taken(host).length).toBe(1);
 });
 
@@ -103,7 +105,7 @@ test("a lost reply on the entry itself is recognised by a re-read, never by the 
 test("an entry under the same source_ref with other values stops the approval instead of being reused", async () => {
   const host = withRequest();
   host.add("leave_entries", "le-x", { employee_id: "emp-aaa", leave_type: "ANNUAL", half_days: -2, kind: "taken", effective_date: "2026-03-02", source_ref: "taken-lv-1", note: null });
-  await expect(approve(host)).rejects.toMatchObject({ field: "ledger" });
+  await expect(approve(host)).rejects.toMatchObject({ field: null });
   expect(host.of("leave_requests")[0]!.profile.status).toBe("pending");
   expect(taken(host).length).toBe(1);
 });
@@ -112,10 +114,10 @@ test("a stale or already-decided request writes no entry", async () => {
   const host = withRequest();
   const seen = stored(host);
   host.of("leave_requests")[0]!.revision = 2; // someone edited it after the owner opened it
-  await expect(approve(host, seen)).rejects.toMatchObject({ field: "ledger", message: "This request changed after you opened it. Reload it, then decide again." });
+  await expect(approve(host, seen)).rejects.toMatchObject({ field: null, message: "This request changed after you opened it. Reload it, then decide again." });
   expect(entries(host)).toEqual([]);
   const decided = withRequest({ status: "rejected" });
-  await expect(approve(decided)).rejects.toMatchObject({ field: "ledger" });
+  await expect(approve(decided)).rejects.toMatchObject({ field: null });
   expect(entries(decided)).toEqual([]);
 });
 
@@ -125,15 +127,100 @@ test("a request that cannot make a valid entry is refused before anything is wri
   expect(host.verbs()).toEqual(["records.show"]);
 });
 
-test("rejecting after an approval that stopped part-way is refused: the deduction would stand for a rejected request", async () => {
-  const host = withRequest();
+// The reviewer's stuck request: an approval stopped after its entry, then the request was edited.
+const stopApproval = (host: ReturnType<typeof makeHost>) => {
   host.fault("records.update", new ApiError("lost", 504), { table: "leave_requests" });
-  await expect(approve(host)).rejects.toMatchObject({ status: 504 });
-  await expect(reject(host)).rejects.toMatchObject({ field: "ledger" });
-  expect(host.of("leave_requests")[0]!.profile.status).toBe("pending");
-  await approve(host); // finishing is the way out
+  return expect(approve(host)).rejects.toMatchObject({ status: 504 });
+};
+const reversals = (host: ReturnType<typeof makeHost>) => entries(host).filter((e) => e.source_ref.startsWith("reversal-"));
+const net = async (host: ReturnType<typeof makeHost>) => (await G.readBalances(scope, G.forEmployee("emp-aaa"), host.actions)).groups.reduce((n, g) => n + g.halfDays, 0);
+
+test("a request whose approval stopped after its entry is refused an edit, in English and zh-HK, and nothing is sent", async () => {
+  const { zhHK } = await import("../../src/features/hr/localeCatalog.ts");
+  const host = withRequest();
+  await stopApproval(host);
+  host.calls.length = 0;
+  const error = await S.updateRecord(scope, R.LEAVE_REQUEST, stored(host), { ...R.viewValues(R.LEAVE_REQUEST, stored(host).profile), days: "1" }, host.actions).catch((e: unknown) => e);
+  const problem = S.problemFor(error, "update", (s: string) => s);
+  expect(problem).toMatchObject({ field: null, kind: "form" });
+  expect(problem.message).toMatch(/approval of this request did not finish/);
+  expect(zhHK[problem.message]).toBeDefined();
+  expect(host.verbs().includes("records.update")).toBe(false);
+  expect(host.of("leave_requests")[0]!.profile.half_days).toBe(4);
+  // A request with no entry is edited as before.
+  const free = withRequest();
+  const edited = await S.updateRecord(scope, R.LEAVE_REQUEST, stored(free), { ...R.viewValues(R.LEAVE_REQUEST, stored(free).profile), days: "1" }, free.actions);
+  expect(edited!.profile.half_days).toBe(2);
+});
+
+test("the stuck request: after an edit the approval meets a different entry, and rejecting reverses the stored entry", async () => {
+  const host = withRequest();
+  await stopApproval(host);
+  // Edited from elsewhere after the entry was written (the screen now refuses this; a staged write does not).
+  const row = host.of("leave_requests")[0]!;
+  row.profile = { ...row.profile, half_days: 2, end_date: "2026-03-02" }; row.revision += 1;
+  await expect(approve(host)).rejects.toMatchObject({ field: null, message: expect.stringMatching(/different values/) });
+  // Reject: one compensating adjustment, the stored entry's half-days back (4, not the edited 2), then rejected.
+  const done = await reject(host);
+  expect(done.profile.status).toBe("rejected");
+  expect(reversals(host)).toEqual([{ employee_id: "emp-aaa", leave_type: "ANNUAL", half_days: 4, kind: "adjustment", effective_date: "2026-03-02", source_ref: "reversal-taken-lv-1", note: expect.stringContaining("lv-1") }]);
+  expect(await net(host)).toBe(0);
+  noUpdateOfEntries(host);
+});
+
+test("a rejection that stopped after its reversal finishes on a retry with one reversal; approving then is refused", async () => {
+  for (const uniqueStatus of [503, 409]) {
+    const host = withRequest({}, makeHost({ uniqueStatus }));
+    await stopApproval(host);
+    host.fault("records.update", new ApiError("lost", 504), { table: "leave_requests" });
+    await expect(reject(host)).rejects.toMatchObject({ status: 504 });
+    expect(reversals(host).length).toBe(1);
+    expect(host.of("leave_requests")[0]!.profile.status).toBe("pending");
+    // Approving now would leave an approved request with nothing deducted: refused, nothing written.
+    const before = entries(host).length;
+    await expect(approve(host)).rejects.toMatchObject({ field: null, message: expect.stringMatching(/Reject it to finish/) });
+    expect(entries(host).length).toBe(before);
+    expect(host.of("leave_requests")[0]!.profile.status).toBe("pending");
+    // An edit is refused too, with the rejection's wording.
+    const edit = await S.updateRecord(scope, R.LEAVE_REQUEST, stored(host), { ...R.viewValues(R.LEAVE_REQUEST, stored(host).profile), days: "1" }, host.actions).catch((e: unknown) => e);
+    expect(S.problemFor(edit, "update", (s: string) => s).message).toMatch(/rejection of this request did not finish/);
+    // Reject again: the reversal is recognised by its ref, the status is set.
+    expect((await reject(host)).profile.status).toBe("rejected");
+    expect(reversals(host).length).toBe(1);
+    expect(taken(host).length).toBe(1);
+    expect(await net(host)).toBe(0);
+    // Once rejected, approving is refused as no longer pending, and nothing is posted.
+    await expect(approve(host)).rejects.toMatchObject({ message: "This request is no longer pending. Reload it to see what happened." });
+    expect(entries(host).length).toBe(2);
+  }
+});
+
+test("a reject from a stale view writes nothing: the request was approved elsewhere, so its deduction stands", async () => {
+  const host = withRequest();
+  const seen = stored(host);
+  await approve(host); // another session approves
+  await expect(reject(host, seen)).rejects.toMatchObject({ field: null, message: "This request is no longer pending. Reload it to see what happened." });
+  expect(reversals(host)).toEqual([]);
   expect(host.of("leave_requests")[0]!.profile.status).toBe("approved");
-  expect(taken(host).length).toBe(1);
+  // Edited after the owner opened it: refused before any ledger read or write.
+  const other = withRequest();
+  const old = stored(other);
+  other.of("leave_requests")[0]!.revision = 2;
+  await expect(reject(other, old)).rejects.toMatchObject({ message: "This request changed after you opened it. Reload it, then decide again." });
+  expect(other.verbs()).toEqual(["records.show"]);
+});
+
+test("a stored taken entry that is not in the expected form is not reversed", async () => {
+  const host = withRequest();
+  host.add("leave_entries", "le-odd", { employee_id: "emp-aaa", leave_type: "ANNUAL", half_days: 4, kind: "adjustment", effective_date: "2026-03-02", source_ref: "taken-lv-1", note: "odd" });
+  const { zhHK } = await import("../../src/features/hr/localeCatalog.ts");
+  const error = await reject(host).catch((e: unknown) => e) as InstanceType<typeof R.FormError>;
+  expect(error).toBeInstanceOf(R.FormError);
+  expect(error.field).toBeNull();
+  expect(error.message).toMatch(/not in the expected form/);
+  expect(zhHK[error.message]).toBeDefined();
+  expect(host.of("leave_requests")[0]!.profile.status).toBe("pending");
+  expect(reversals(host)).toEqual([]);
 });
 
 // ---- run accrual ----------------------------------------------------------------------------------------------
@@ -215,6 +302,24 @@ test("a large month is posted in chunks within 200 items and the byte limit; not
   expect(host.calls.filter((c) => c.verb === "records.list" && c.args.table === undefined).length).toBe(5);
 });
 
+test("the month's existing entries are looked up by their exact refs, 50 at a time, never by prefix or contains", async () => {
+  const host = company(120);
+  await G.runAccrual(scope, await G.planMonth(scope, "2026-03", host.actions), undefined, host.actions);
+  host.calls.length = 0;
+  const again = await G.planMonth(scope, "2026-03", host.actions);
+  expect(again.alreadyRecorded).toBe(120);
+  const ledgerReads = host.calls.filter((c) => c.verb === "records.list" && c.args.table === "leave_entries");
+  expect(ledgerReads.length).toBe(3);
+  for (const call of ledgerReads) {
+    expect(call.args.filters.map((f: { op: string }) => f.op)).toEqual(["in"]);
+    expect(call.args.filters[0].value.length).toBeLessThanOrEqual(50);
+  }
+  expect(host.calls.some((c) => (c.args.filters ?? []).some((f: { op: string }) => f.op === "prefix" || f.op === "contains"))).toBe(false);
+  // A lookup page that says there is more is a read that did not finish: an error, never "none recorded".
+  const cut = { ...host.actions, list: async (s: unknown, args: { table?: string }) => ({ ...(await host.actions.list(s as never, args as never)), ...(args.table === "leave_entries" ? { truncated: true } : {}) }) };
+  await expect(G.planMonth(scope, "2026-03", cut as never)).rejects.toMatchObject({ field: null, message: "The list was too long to read in full. Nothing was changed." });
+});
+
 test("a run that stops part-way reports what was posted, and running it again posts only what is missing", async () => {
   const host = company(450);
   const plan = await G.planMonth(scope, "2026-03", host.actions);
@@ -233,6 +338,19 @@ test("a run that stops part-way reports what was posted, and running it again po
   await G.runAccrual(scope, again, undefined, host.actions);
   expect(entries(host).length).toBe(450);
   expect(new Set(entries(host).map((e) => e.source_ref)).size).toBe(450);
+});
+
+test("after a refused chunk, an entry already under one of its refs counts only when it is the same entry", async () => {
+  const host = company(3);
+  const plan = await G.planMonth(scope, "2026-03", host.actions);
+  // Another entry already holds one of the planned refs, with other values.
+  host.add("leave_entries", "le-other", { ...plan.entries[1]!, half_days: 9 });
+  const error = await G.postEntries(scope, plan.entries, undefined, host.actions).catch((e: unknown) => e);
+  expect(error).toBeInstanceOf(G.PostStopped);
+  const stopped = error as InstanceType<typeof G.PostStopped>;
+  expect(stopped.done).toEqual({ posted: 0, alreadyThere: 0 });
+  expect(S.problemFor(stopped.cause, "create", (s: string) => s)).toMatchObject({ field: null, kind: "form", message: expect.stringMatching(/different values/) });
+  expect(entries(host).length).toBe(1);
 });
 
 test("a timeout where the batch landed is recognised by the re-read", async () => {
@@ -350,4 +468,26 @@ test("the screen never updates a ledger entry anywhere in its source", async () 
     const source = readFileSync(new URL(file, dir), "utf8");
     if (/LEDGER|leave_entries/.test(source)) expect([file, /actions\.update\([^)]*(LEDGER|leave_entries)/.test(source)]).toEqual([file, false]);
   }
+});
+
+test("a ledger refusal on the adjustment form is shown, not dropped", async () => {
+  const { renderToStaticMarkup } = await import("react-dom/server");
+  const { createElement } = await import("react");
+  const { default: RecordForm } = await import("../../src/features/hr/RecordForm.tsx");
+  const host = makeHost();
+  host.add("employees", "emp-aaa", employee("aaa", { employee_no: "E-001" }));
+  host.add("leave_types", "lt-1", { code: "ANNUAL", name: "Annual leave", paid: true, accrual_rule: null });
+  host.add("leave_entries", "le-x", { employee_id: "emp-aaa", leave_type: "ANNUAL", half_days: 6, kind: "adjustment", effective_date: "2026-03-05", source_ref: "adjustment-adj-1", note: "Other" });
+  const form = { employeeNo: "E-001", leaveType: "ANNUAL", days: "1", effectiveDate: "2026-03-05", note: "Why" };
+  const error = await G.adjustBalance(scope, form, G.adjustmentRef("adj-1"), host.actions).catch((e: unknown) => e);
+  const problem = S.problemFor(error, "create", (s: string) => s);
+  expect(problem.field).toBeNull();
+  const render = (p: { field: string | null; message: string }) =>
+    renderToStaticMarkup(createElement(RecordForm, { spec: R.ADJUSTMENT, formId: "hr-adjust", initial: R.emptyValues(R.ADJUSTMENT), problem: p, onSubmit: () => {} }));
+  expect(render(problem)).toContain(problem.message);
+  // Even an error naming no field of this form is shown for the whole form.
+  expect(render({ field: "ledger", message: "Shown anyway" })).toContain("Shown anyway");
+  // An error on one of the form's fields belongs to that field, not to the whole form.
+  expect(render({ field: "note", message: "Fill in this field." })).not.toContain('role="alert"');
+  expect(render(problem)).toContain('role="alert"');
 });

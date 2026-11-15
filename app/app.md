@@ -72,7 +72,9 @@ employee, a leave type code, a signed integer `half_days` (never 0), a `kind` (`
 skill read that same aggregate.
 
 - Approving a leave request first writes its `taken` entry (`source_ref` `taken-<request id>`), then sets the request
-  approved; a retry meets the same key. Rejecting writes no entry.
+  approved; a retry meets the same key. Rejecting writes no entry, unless an approval stopped after its entry: then
+  it first writes a compensating `adjustment` (`reversal-taken-<request id>`). A request with such an entry cannot
+  be edited in the screen until the decision is finished.
 - Run accrual (Leave → Balances) posts `accrual-<employee id>-<leave type>-<YYYY-MM>` entries with `records.batch`,
   only the ones not already there. The yearly entitlement comes from `leave_types.accrual_rule`, the customer's own data:
   `{"v":1,"days_per_year":[{"from_years":0,"days":7},{"from_years":3,"days":8}]}`. No figure ships with the app.

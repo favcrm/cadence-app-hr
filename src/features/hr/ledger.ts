@@ -5,7 +5,7 @@
 // after a re-read proves the entry is there and is the same one.
 import { ApiError } from "@cadence/screen-ui";
 import {
-  adjustmentEntry, balanceFor, chunkBatch, planAccrual, sameEntry, takenEntry, takenRef, type AccrualPlan, type Balances, type EmployeeFacts,
+  adjustmentEntry, balanceFor, chunkBatch, planAccrual, reversalEntry, reversalRef, sameEntry, takenEntry, takenRef, type AccrualPlan, type Balances, type EmployeeFacts,
   type LeaveTypeFacts, type LedgerBatchItem, type LedgerEntry,
 } from "../../domain/leave";
 import {
@@ -25,6 +25,7 @@ const text = (record: HostRecord, key: string): string | null => {
   return typeof v === "string" ? v : null;
 };
 
+const TOO_LONG_TEXT = "The list was too long to read in full. Nothing was changed.";
 /** Every row of a list, page by page. A failed page rejects: a read that did not finish is never "none". */
 export async function listAll(scope: HostScope, table: string | undefined, filters: RecordFilter[], actions: HostActions = hostActions): Promise<HostRecord[]> {
   const rows: HostRecord[] = [];
@@ -33,12 +34,12 @@ export async function listAll(scope: HostScope, table: string | undefined, filte
     const result = await actions.list(scope, { ...(table ? { table } : {}), ...(filters.length ? { filters } : {}), limit: PAGE, ...(cursor ? { cursor } : {}) });
     rows.push(...result.records);
     if (result.nextCursor === null) {
-      if (result.truncated) throw new FormError("ledger", "The list was too long to read in full. Nothing was changed.");
+      if (result.truncated) throw new FormError(null, TOO_LONG_TEXT);
       return rows;
     }
     cursor = result.nextCursor;
   }
-  throw new FormError("ledger", "The list was too long to read in full. Nothing was changed.");
+  throw new FormError(null, TOO_LONG_TEXT);
 }
 
 // ---- balances ------------------------------------------------------------------------------------------
@@ -83,38 +84,70 @@ export async function ensureEntry(scope: HostScope, entry: LedgerEntry, actions:
     if (!(error instanceof ApiError) || !UNSURE.includes(error.status)) throw error;
     const found = await findEntry(scope, entry.source_ref, actions);
     if (found === null) throw error;
-    if (!sameEntry(found.profile, entry)) throw new FormError("ledger", DIFFERENT_TEXT);
+    if (!sameEntry(found.profile, entry)) throw new FormError(null, DIFFERENT_TEXT);
     return "exists";
   }
 }
 
 // ---- approving and rejecting a leave request ----------------------------------------------------------
 const REQUEST = "leave_requests";
+const NOT_PENDING_TEXT = "This request is no longer pending. Reload it to see what happened.";
+const CHANGED_TEXT = "This request changed after you opened it. Reload it, then decide again.";
+const REVERSED_TEXT = "An earlier rejection of this request already reversed its leave entry. Reject it to finish; it cannot be approved now.";
+const EDIT_AFTER_APPROVAL_TEXT = "An approval of this request did not finish: its leave is already deducted, so it cannot be edited. Finish the approval first (approve it again), or reject it to reverse the deduction.";
+const EDIT_AFTER_REJECTION_TEXT = "A rejection of this request did not finish: its leave entry is already reversed, so it cannot be edited. Finish the rejection first (reject it again).";
+
+/** A fresh read of the request: it must still be pending and at the revision the owner decided on. */
+async function freshPending(scope: HostScope, record: HostRecord, actions: HostActions): Promise<HostRecord> {
+  const fresh = await actions.show(scope, record.id, REQUEST);
+  if (text(fresh, "status") !== "pending") throw new FormError(null, NOT_PENDING_TEXT);
+  if (fresh.revision !== record.revision) throw new FormError(null, CHANGED_TEXT);
+  return fresh;
+}
+
 /**
  * Approve: re-read the request (it must still be open and at the revision the owner saw), write its `taken` entry
  * (minus its half-days), and only then set the request approved. A failure after the entry leaves it recorded, and the
- * next try recognises it and goes on to the status, so one approval is one entry.
+ * next try recognises it and goes on to the status, so one approval is one entry. If a rejection that did not finish
+ * already reversed the entry, approving would leave an approved request with nothing deducted, so it is refused.
  */
 export async function approveLeave(scope: HostScope, record: HostRecord, today: string, note: string, actions: HostActions = hostActions): Promise<HostRecord> {
   const patch = decisionPatch("approved", today, note);
-  const fresh = await actions.show(scope, record.id, REQUEST);
-  if (text(fresh, "status") !== "pending") throw new FormError("ledger", "This request is no longer pending. Reload it to see what happened.");
-  if (fresh.revision !== record.revision) throw new FormError("ledger", "This request changed after you opened it. Reload it, then decide again.");
+  const fresh = await freshPending(scope, record, actions);
   const built = takenEntry(fresh);
-  if (!built.ok) throw new FormError("ledger", built.reason);
-  await ensureEntry(scope, built.entry, actions);
+  if (!built.ok) throw new FormError(null, built.reason);
+  // The entry can only already exist after an earlier try; only then can a reversal of it exist too.
+  if ((await ensureEntry(scope, built.entry, actions)) === "exists" && (await findEntry(scope, reversalRef(fresh.id), actions)) !== null) {
+    throw new FormError(null, REVERSED_TEXT);
+  }
   return actions.update(scope, fresh.id, fresh.revision, patch, REQUEST);
 }
 /**
- * Reject writes no entry. If an earlier approval already recorded the request's entry (it stopped before the status),
- * rejecting would leave that deduction standing, so it is refused: finish the approval instead.
+ * Reject: re-read the request (still pending, at the revision the owner saw). If an earlier approval stopped after its
+ * `taken` entry, that deduction would otherwise stand for a rejected request, so first write the compensating
+ * `adjustment` (the stored entry's half-days back, `reversal-taken-<id>`), retry-safe like any entry, and only then
+ * set the request rejected. With no `taken` entry nothing is written to the ledger.
  */
 export async function rejectLeave(scope: HostScope, record: HostRecord, today: string, note: string, actions: HostActions = hostActions): Promise<HostRecord> {
   const patch = decisionPatch("rejected", today, note);
-  if ((await findEntry(scope, takenRef(record.id), actions)) !== null) {
-    throw new FormError("ledger", "An earlier approval of this request already recorded its leave entry. Approve it to finish, instead of rejecting it.");
+  const fresh = await freshPending(scope, record, actions);
+  const taken = await findEntry(scope, takenRef(fresh.id), actions);
+  if (taken !== null) {
+    const built = reversalEntry(fresh.id, taken.profile);
+    if (!built.ok) throw new FormError(null, built.reason);
+    await ensureEntry(scope, built.entry, actions);
   }
-  return actions.update(scope, record.id, record.revision, patch, REQUEST);
+  return actions.update(scope, fresh.id, fresh.revision, patch, REQUEST);
+}
+/**
+ * Before a pending request is edited: refuse while a decision that did not finish has written to the ledger. A `taken`
+ * entry was made from the request as it was; an edit would leave it out of step, and approve would then meet a
+ * different entry. A reversal means a rejection is half done.
+ */
+export async function assertNoUnfinishedDecision(scope: HostScope, requestId: string, actions: HostActions = hostActions): Promise<void> {
+  if ((await findEntry(scope, takenRef(requestId), actions)) === null) return;
+  const reversed = (await findEntry(scope, reversalRef(requestId), actions)) !== null;
+  throw new FormError(null, reversed ? EDIT_AFTER_REJECTION_TEXT : EDIT_AFTER_APPROVAL_TEXT);
 }
 
 // ---- batches -----------------------------------------------------------------------------------------------
@@ -125,20 +158,25 @@ export class PostStopped extends Error {
 }
 const items = (entries: readonly LedgerEntry[]): LedgerBatchItem[] => entries.map((profile) => ({ record_id: newRecordId("le"), table: LEDGER, profile }));
 
-/** Which of these refs are in the ledger, asked 50 at a time (the `in` filter's limit). A failed read throws. */
-export async function refsPresent(scope: HostScope, refs: readonly string[], actions: HostActions = hostActions): Promise<Set<string>> {
-  const present = new Set<string>();
+/**
+ * The ledger entries with these refs, by ref, asked 50 at a time (the `in` filter's limit). A failed read throws, and
+ * so does a page that says there is more: a read that did not finish is never "none".
+ */
+export async function entriesPresent(scope: HostScope, refs: readonly string[], actions: HostActions = hostActions): Promise<Map<string, HostRecord>> {
+  const present = new Map<string, HostRecord>();
   for (let i = 0; i < refs.length; i += 50) {
     const page = await actions.list(scope, { table: LEDGER, filters: [{ field: "source_ref", op: "in", value: refs.slice(i, i + 50) }], limit: PAGE });
-    for (const row of page.records) { const ref = text(row, "source_ref"); if (ref !== null) present.add(ref); }
+    if (page.nextCursor !== null || page.truncated) throw new FormError(null, TOO_LONG_TEXT);
+    for (const row of page.records) { const ref = text(row, "source_ref"); if (ref !== null) present.set(ref, row); }
   }
   return present;
 }
 
 /**
  * Post entries with `records.batch`, chunked within 200 items and the chunk byte limit. A chunk is all-or-nothing. If
- * a chunk is refused for a duplicate key (or its reply is lost), the refs are read back: those already there count as
- * recorded and the rest are posted once more. Any other failure stops the run with what was done (`PostStopped`).
+ * a chunk is refused for a duplicate key (or its reply is lost), its refs are read back: an entry already there counts
+ * as recorded only when it is the same entry (`sameEntry`); a different entry under the ref stops the run. The rest
+ * are posted once more. Any other failure stops the run with what was done (`PostStopped`).
  */
 export async function postEntries(scope: HostScope, entries: readonly LedgerEntry[], onProgress?: (done: number, total: number) => void, actions: HostActions = hostActions): Promise<PostResult> {
   const result: PostResult = { posted: 0, alreadyThere: 0 };
@@ -151,10 +189,13 @@ export async function postEntries(scope: HostScope, entries: readonly LedgerEntr
         result.posted += chunk.length;
       } catch (error) {
         if (!(error instanceof ApiError) || !UNSURE.includes(error.status)) throw error;
-        const present = await refsPresent(scope, chunk.map((i) => i.profile.source_ref), actions);
+        const present = await entriesPresent(scope, chunk.map((i) => i.profile.source_ref), actions);
         const missing = chunk.filter((i) => !present.has(i.profile.source_ref));
         // None of the chunk is there: the refusal had another cause (or a timeout that did not land). Say so, do not guess.
         if (missing.length === chunk.length) throw error;
+        if (chunk.some((i) => present.has(i.profile.source_ref) && !sameEntry(present.get(i.profile.source_ref)!.profile, i.profile))) {
+          throw new FormError(null, DIFFERENT_TEXT);
+        }
         result.alreadyThere += chunk.length - missing.length;
         if (missing.length > 0) {
           await actions.batch(scope, missing.map((i) => ({ ...i, record_id: newRecordId("le") })));
@@ -177,17 +218,16 @@ const typeFacts = (rows: HostRecord[]): LeaveTypeFacts[] => rows.flatMap((r) => 
   const code = text(r, "code");
   return code === null ? [] : [{ code, accrualRule: (r.profile as Record<string, unknown> | null)?.accrual_rule ?? null }];
 });
-/** The accrual refs already in the ledger for a month, read with a prefix and a month filter and paged to the end. */
-export async function existingAccrualRefs(scope: HostScope, month: string, actions: HostActions = hostActions): Promise<Set<string>> {
-  const rows = await listAll(scope, LEDGER, [{ field: "source_ref", op: "prefix", value: "accrual-" }, { field: "source_ref", op: "contains", value: `-${month}` }], actions);
-  return new Set(rows.flatMap((r) => { const ref = text(r, "source_ref"); return ref === null ? [] : [ref]; }));
-}
-/** Read everything a month's accrual depends on, and compute it. Writes nothing. */
+/**
+ * Read everything a month's accrual depends on, and compute it. Writes nothing. The plan's own refs are planned first,
+ * then looked up exactly (`in`, 50 at a time); those already in the ledger are left out.
+ */
 export async function planMonth(scope: HostScope, month: string, actions: HostActions = hostActions): Promise<AccrualPlan> {
-  const [employees, leaveTypes, existingRefs] = await Promise.all([
-    listAll(scope, undefined, [], actions), listAll(scope, "leave_types", [], actions), existingAccrualRefs(scope, month, actions),
-  ]);
-  return planAccrual({ month, employees: facts(employees), leaveTypes: typeFacts(leaveTypes), existingRefs });
+  const [employees, leaveTypes] = await Promise.all([listAll(scope, undefined, [], actions), listAll(scope, "leave_types", [], actions)]);
+  const input = { month, employees: facts(employees), leaveTypes: typeFacts(leaveTypes) };
+  const wanted = planAccrual({ ...input, existingRefs: new Set() }).entries.map((e) => e.source_ref);
+  const existingRefs = new Set((await entriesPresent(scope, wanted, actions)).keys());
+  return planAccrual({ ...input, existingRefs });
 }
 /** Post a plan's missing entries. Running it again plans again from a fresh read, so it posts only what is still missing. */
 export const runAccrual = (scope: HostScope, plan: AccrualPlan, onProgress?: (done: number, total: number) => void, actions: HostActions = hostActions) =>
