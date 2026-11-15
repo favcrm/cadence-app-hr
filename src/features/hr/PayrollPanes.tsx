@@ -17,7 +17,9 @@ import { problemFor } from "./recordsSubmit";
 import { useHrLoader } from "./resources";
 import { chip } from "./chip";
 
-const hkd = (minor: number | null | undefined) => (typeof minor === "number" && Number.isSafeInteger(minor) ? `HKD ${minor < 0 ? "-" : ""}${fromMinor(Math.abs(minor), "HKD")}` : "—");
+/** An HKD amount for display, digits grouped: 3000000 is "HKD 30,000.00". */
+const hkd = (minor: number | null | undefined) => (typeof minor === "number" && Number.isSafeInteger(minor)
+  ? `HKD ${minor < 0 ? "-" : ""}${fromMinor(Math.abs(minor), "HKD").replace(/\B(?=(\d{3})+\.)/g, ",")}` : "—");
 const pct = (bp: number) => `${bp / 100}%`;
 const prof = (r: HostRecord) => (r.profile ?? {}) as Record<string, unknown>;
 const s = (v: unknown) => (typeof v === "string" && v !== "" ? v : "—");
@@ -69,7 +71,7 @@ export function RatesPane({ scope, canWrite }: { scope: HostScope; canWrite: boo
       )}
       {rows.length > 0 && (
         <DataTable<HostRecord>
-          label={t("MPF rates — scroll horizontally to reach every column")} wrapClassName="hr-table-wrap" tableClassName="hr-table" rowKey={(r) => r.id}
+          label={t("MPF rates — scroll horizontally to reach every column")} wrapClassName="hr-table-wrap" tableClassName="hr-table hr-pay-table" rowKey={(r) => r.id}
           columns={[
             { key: "from", header: t("Effective from"), cell: (r) => <span className="num">{s(prof(r).effective_from)}</span>, cellClassName: "hr-nowrap" },
             { key: "er", header: t("Employer rate"), cell: (r) => { const x = toRate(r); return x ? pct(x.employerRateBp) : "—"; } },
@@ -158,7 +160,7 @@ export function SalariesPane({ scope, canWrite }: { scope: HostScope; canWrite: 
       {salaries.data && rows.length === 0 && <EmptyState name="salaries" title={t("No salaries yet")}>{t(canWrite ? "Add a monthly salary for each employee before the first payroll run." : "Nothing has been recorded yet.")}</EmptyState>}
       {rows.length > 0 && (
         <DataTable<(typeof rows)[number]>
-          label={t("Salaries — scroll horizontally to reach every column")} wrapClassName="hr-table-wrap" tableClassName="hr-table" rowKey={(row) => row.r.id}
+          label={t("Salaries — scroll horizontally to reach every column")} wrapClassName="hr-table-wrap" tableClassName="hr-table hr-pay-table" rowKey={(row) => row.r.id}
           columns={[
             { key: "employee", header: t("Employee"), cell: (row) => (row.x ? nameOf(row.x.employeeId) : "—"), cellClassName: "text-ink-100" },
             { key: "from", header: t("Effective from"), cell: (row) => <span className="num">{row.x?.effectiveFrom ?? "—"}</span>, cellClassName: "hr-nowrap" },
@@ -185,7 +187,7 @@ function LinesTable({ lines, edit }: { lines: readonly LineView[]; edit?: { valu
     : <span className="num">{hkd(stored)}</span>);
   return (
     <DataTable<LineView>
-      label={t("Payroll lines — scroll horizontally to reach every column")} wrapClassName="hr-table-wrap" tableClassName="hr-table" rowKey={(l) => l.employee_id}
+      label={t("Payroll lines — scroll horizontally to reach every column")} wrapClassName="hr-table-wrap" tableClassName="hr-table hr-pay-table" rowKey={(l) => l.employee_id}
       columns={[
         { key: "employee", header: t("Employee"), cell: (l) => l.employee_name, cellClassName: "text-ink-100" },
         { key: "join", header: t("Join date"), cell: (l) => <span className="num">{l.join_date}</span>, cellClassName: "hr-nowrap" },
@@ -261,7 +263,8 @@ function NewRun({ scope, onSaved, onCancel }: { scope: HostScope; onSaved: () =>
           {plan.skipped.length > 0 && (
             <div>
               <p className="text-label">{t("Not in this run:")}</p>
-              <ul className="hr-reasons">{plan.skipped.map((x) => <li key={x.employeeId}>{x.name} — {t(SKIP_TEXT[x.reason])}</li>)}</ul>
+              <ul className="hr-reasons">{plan.skipped.slice(0, 10).map((x) => <li key={x.employeeId}>{x.name} — {t(SKIP_TEXT[x.reason])}</li>)}</ul>
+              {plan.skipped.length > 10 && <p className="text-micro text-ink-500">{t("and {count} more").replace("{count}", String(plan.skipped.length - 10))}</p>}
             </div>
           )}
           {plan.invalid.length > 0 && <ErrorNotice bare>{t("Deductions are more than the pay for: {names}.").replace("{names}", plan.invalid.map((x) => x.name).join(", "))}</ErrorNotice>}
@@ -346,7 +349,7 @@ export function RunsPane({ scope, canWrite, canBatch }: { scope: HostScope; canW
       {runs.data && rows.length === 0 && <EmptyState name="runs" title={t("No payroll runs yet")}>{t(canWrite ? "Add the MPF rates and salaries, then start a new payroll run." : "Nothing has been recorded yet.")}</EmptyState>}
       {rows.length > 0 && (
         <DataTable<HostRecord>
-          label={t("Payroll runs — scroll horizontally to reach every column")} wrapClassName="hr-table-wrap" tableClassName="hr-table" rowKey={(r) => r.id}
+          label={t("Payroll runs — scroll horizontally to reach every column")} wrapClassName="hr-table-wrap" tableClassName="hr-table hr-pay-table" rowKey={(r) => r.id}
           rowProps={(r) => ({ className: "hr-row-open", onClick: (e: { target: EventTarget }) => { if (!(e.target as HTMLElement).closest("button, input, a")) setView({ s: "run", id: r.id }); } })}
           columns={[
             { key: "ref", header: t("Run"), cell: (r) => <button type="button" className="lnk" onClick={() => setView({ s: "run", id: r.id })}>{s(prof(r).run_ref)}</button>, cellClassName: "text-ink-100 hr-nowrap" },
@@ -373,7 +376,7 @@ function BatchView({ batch }: { batch: AccountingBatch | Proposal }) {
   return (
     <div className="grid gap-1">
       <DataTable<(typeof lines)[number]>
-        label={t("Journal lines")} wrapClassName="hr-table-wrap" tableClassName="hr-table" rowKey={(l) => `${l.code}:${l.amount}`}
+        label={t("Journal lines")} wrapClassName="hr-table-wrap" tableClassName="hr-table hr-pay-table" rowKey={(l) => `${l.code}:${l.amount}`}
         columns={[
           { key: "code", header: t("Account"), cell: (l) => <span className="num">{l.code}</span> },
           { key: "dr", header: t("Debit"), cell: (l) => <span className="num">{l.amount > 0 ? hkd(l.amount) : ""}</span>, cellClassName: "hr-nowrap" },
@@ -472,7 +475,7 @@ export function PostingsPane({ scope, canWrite }: { scope: HostScope; canWrite: 
       {data.data && rows.length === 0 && <EmptyState name="postings" title={t("Nothing to post yet")}>{t("Approved payroll runs and approved claims appear here.")}</EmptyState>}
       {rows.length > 0 && (
         <DataTable<Postable>
-          label={t("Postings — scroll horizontally to reach every column")} wrapClassName="hr-table-wrap" tableClassName="hr-table" rowKey={(r) => `${r.source}:${r.id}`}
+          label={t("Postings — scroll horizontally to reach every column")} wrapClassName="hr-table-wrap" tableClassName="hr-table hr-pay-table" rowKey={(r) => `${r.source}:${r.id}`}
           columns={[
             { key: "what", header: t("Approved"), cell: (r) => r.label, cellClassName: "text-ink-100" },
             { key: "ref", header: t("Accounting reference"), cell: (r) => <span className="num">{r.ref}</span>, cellClassName: "hr-nowrap" },

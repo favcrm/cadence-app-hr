@@ -152,12 +152,12 @@ function call(verb: string, args: Record<string, unknown>): unknown {
       const seenIds = new Set<string>();
       for (const item of batch) {
         const name = typeof item.table === "string" ? item.table : "employees";
-        if (name !== "leave_entries" || typeof item.record_id !== "string" || !item.profile) throw failed();
-        ledgerRule(item.profile);
+        if (!["leave_entries", "payroll_runs", "payroll_lines"].includes(name) || typeof item.record_id !== "string" || !item.profile) throw failed();
+        if (name === "leave_entries") ledgerRule(item.profile);
         const all = [...rowsOf(name), ...(staged[name] ??= [])];
         if (seenIds.has(item.record_id) || all.some((r) => r.id === item.record_id)) throw new Refused(refusal("conflict", "That changed. Refresh before trying again."));
         // One duplicate key refuses the whole batch: 409 unique_violation, which the board shows as `conflict`.
-        if (duplicateRef(all, item.profile)) throw new Refused(refusal("conflict", "That changed. Refresh before trying again."));
+        if (name === "leave_entries" && duplicateRef(all, item.profile)) throw new Refused(refusal("conflict", "That changed. Refresh before trying again."));
         seenIds.add(item.record_id);
         staged[name]!.push({ id: item.record_id, revision: 1, profile: item.profile });
       }
