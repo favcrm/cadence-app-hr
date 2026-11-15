@@ -63,6 +63,15 @@
         "Screen this candidate against the opening",
         "Which candidates are at the interview stage?"
       ]
+    },
+    {
+      "id": "attendance",
+      "label": "Attendance",
+      "prompts": [
+        "Who forgot to clock out this week?",
+        "Who clocked in after 09:00 today?",
+        "Summarise an employee's punches this month"
+      ]
     }
   ],
   "presentation": {

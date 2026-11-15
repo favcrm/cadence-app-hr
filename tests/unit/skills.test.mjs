@@ -9,11 +9,11 @@ const app = fileURLToPath(new URL("../../app/", import.meta.url));
 const files = {};
 const walk = (dir) => { for (const n of readdirSync(dir)) { const p = `${dir}/${n}`; if (statSync(p).isDirectory()) walk(p); else files[p.slice(app.length)] = readFileSync(p, "utf8"); } };
 walk(app + "skills");
-const TAGS = ["claim-intake", "hr-policy-answers", "hr-posting", "job-description", "leave-desk", "payroll-prep", "recruit-screening"];
+const TAGS = ["attendance-review", "claim-intake", "hr-policy-answers", "hr-posting", "job-description", "leave-desk", "payroll-prep", "recruit-screening"];
 const body = (tag) => Object.entries(files).filter(([p]) => p.startsWith(`skills/${tag}/`)).map(([, t]) => t).join("\n");
 const clone = () => ({ ...files });
 
-test("the app ships exactly the seven planned skills and each passes the reader rules under 32 KiB", () => {
+test("the app ships exactly the eight planned skills and each passes the reader rules under 32 KiB", () => {
   const present = [...new Set(Object.keys(files).map((p) => p.split("/")[1]))].sort();
   expect(present).toEqual(TAGS);
   for (const tag of TAGS) {
@@ -138,4 +138,30 @@ test("payroll-prep explains and never computes or writes payroll", () => {
   expect(text).toMatch(/Only the latest approved run of a month is posted/);
   // No rate figure in the skill: rates are the stored row's.
   expect(text).not.toMatch(/7,100|30,000|1,500/);
+});
+
+test("attendance-review reads punches exactly, trusts the record id over the method column, and never writes", () => {
+  const text = body("attendance-review");
+  expect(text).toMatch(/`table: "attendance_punches"`/);
+  expect(text).toMatch(/Never stage a `records\.create`, `records\.update` or `records\.batch` on `attendance_punches`/);
+  expect(text).toMatch(/This skill writes nothing/);
+  expect(text).toMatch(/Never assume a start time/);
+  expect(text).toMatch(/Hong Kong time|UTC\+8/);
+  expect(text).toMatch(/`imp-\.\.\.` is the owner's device import, `cor-\.\.\.` is the owner's correction/);
+  expect(text).toMatch(/Do not trust the `method` column/);
+  expect(text).toMatch(/`member_id` equals that employee's `member_id`/);
+  expect(text).toMatch(/Never say where someone was/);
+  expect(text).toMatch(/Never compute pay, overtime, deductions or a penalty/);
+  expect(text).toMatch(/following `next_cursor` to the end/);
+  expect(text).toMatch(/Add a correction/);
+});
+
+test("leave-desk and claim-intake know staff-filed rows and never stage into them", () => {
+  const leave = body("leave-desk"), claims = body("claim-intake"), posting = body("hr-posting");
+  expect(leave).toMatch(/`table: "staff_leave_requests"`/);
+  expect(leave).toMatch(/list it as withdrawn, not pending/);
+  expect(leave).toMatch(/Never stage a create, an update or a status change on `staff_leave_requests` or `leave_withdrawals`/);
+  expect(claims).toMatch(/`table: "staff_claims"`/);
+  expect(claims).toMatch(/Never stage a create or an update on `staff_claims`/);
+  expect(posting).toMatch(/`table: "staff_claims"`/);
 });

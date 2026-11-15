@@ -16,18 +16,18 @@
     {
       "name": "client.js",
       "media_type": "text/javascript",
-      "size": 235680,
-      "sha256": "sha256:2ebd24979acebf2015a8b31061ababeccfa585a6191aaf538dbe212d7384d5d2"
+      "size": 297626,
+      "sha256": "sha256:1f0b250f15dd123b2ba513e59cc07f50d9184de86297f73f40a8ff268600bba3"
     },
     {
       "name": "hr.css",
       "media_type": "text/css",
-      "size": 27485,
-      "sha256": "sha256:86f81e28342effd05f98396bc6fc2bcb16a48528cffb283cd79f49e95a0b0637"
+      "size": 30084,
+      "sha256": "sha256:b6515cebf9f370449fcd7c438d8899d017dba03c9587ed48841b01aa23c52ec8"
     }
   ],
   "provenance": {
-    "source_digest": "sha256:917680ba272b5b0c6556c162db5edeb09aafb1aa83bc7b616148407d304b9cb2",
+    "source_digest": "sha256:c9a4857537d44549b143cf44eef43db6403a43ea0c94af1e203ca21f33133300",
     "sdk_digest": "sha256:fd65c974511e63b3996e9fa7e438fb4e39df5f508d11636116ef150fcc123e35",
     "toolchain_digest": "sha256:e21cfc8222db408abe6ba5a482520639d9cf4b96481c19aff4b4246af8a65e42"
   },
@@ -73,6 +73,10 @@
       {
         "id": "recruiting",
         "label": "Recruiting"
+      },
+      {
+        "id": "attendance",
+        "label": "Attendance"
       }
     ]
   }

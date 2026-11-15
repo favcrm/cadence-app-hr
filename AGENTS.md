@@ -13,7 +13,9 @@ never add a private `postMessage` receiver, a copy of the host frame or host
 CSS. The host contract is its app storage descriptor and limits, the
 `records.*` verbs and the screen services.
 
-Release scope is in the ticket. Every table is owner-only. From 0.4.0 the app stores salaries
+Release scope is in the ticket. Every table is owner-only; from 0.5.0 the staff tables also declare
+`row_owner: member_id`, so a member reads and files only their own rows there. The staff view calls those
+tables only (a member's call to any other table is refused 403 and the board closes the frame). From 0.4.0 the app stores salaries
 and payroll; never add identity document (HKID), bank account number or medical columns. The agent
 never computes pay, MPF or posting amounts: tested code in the screen does. Dates are `text` holding
 `YYYY-MM-DD`; money, when it arrives, is an integer in minor units with a

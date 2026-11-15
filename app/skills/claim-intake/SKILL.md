@@ -18,6 +18,10 @@ Use this when the owner wants an expense claim recorded for an employee. You sta
 7. Stage one create: `records.create` with `table: "claims"` and the fields in `references/claim-fields.md`, all inside `profile`. Leave `status` as `submitted`; the host refuses a create in any other state.
 8. After the owner approves the staged write, read the record back with `records.show` before you report that it is saved.
 
+## Staff claims (0.5.0)
+
+Staff linked to an employee record can submit claims from their own view of HR; those are in `table: "staff_claims"` (the claim fields plus `member_id`). When the owner asks which claims are waiting, read both `claims` and `staff_claims` with `filters: [{"field": "status", "op": "eq", "value": "submitted"}]`, and include `staff_claims` in the duplicate check of step 6. Never stage a create or an update on `staff_claims`: staff file them and the owner decides them on Claims → Staff claims.
+
 ## Rules
 
 - You never set a claim to `approved` or `rejected`, and you never mark a claim paid: this release has no paid status. An approved claim cannot be changed, and you never try to change its amount.

@@ -27,6 +27,10 @@ A balance is the host's own sum of an employee's ledger entries (`leave_entries.
 - Do not state a balance from a policy, from approved requests or from an earlier answer. Read it again.
 - Negative is possible (leave taken beyond what accrued). State it plainly, for example "-1.5 days"; it is not an error.
 
+## Staff requests (0.5.0)
+
+Staff linked to an employee record can file leave from their own view of HR. Those requests are in `table: "staff_leave_requests"` (the same fields, plus `member_id`, the filing account). When the owner asks what is pending, read both `leave_requests` and `staff_leave_requests` with `filters: [{"field": "status", "op": "eq", "value": "pending"}]`, and for each staff request also read `table: "leave_withdrawals"` with `filters: [{"field": "request_id", "op": "eq", "value": "<request id>"}]`: a pending staff request with a withdrawal row from the same `member_id` was withdrawn by the employee; list it as withdrawn, not pending. Never stage a create, an update or a status change on `staff_leave_requests` or `leave_withdrawals`: staff file them, and the owner decides them on Leave → Staff requests in the screen, which checks the filing account is the one linked to that employee. For the overlap check in step 4, read both tables.
+
 ## Rules
 
 - You never set a request to `approved`, `rejected` or `cancelled`: never stage a `records.update` that changes a leave request's `status`. If the owner asks you to approve or reject leave, send them to the request on the Leave tab and its Approve or Reject. The host does not stop a staged approval of a pending request, but an approval made outside the screen writes no ledger entry: the balance stays unchanged until the owner runs Leave → Balances → "Record earlier approvals". A staged rejection skips the screen's check for a leave entry that an unfinished approval already wrote.
