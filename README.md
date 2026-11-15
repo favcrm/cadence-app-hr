@@ -271,7 +271,7 @@ preview (three tabs, balance from the ledger, time-only clock, withdraw a pendin
   days. Punches are never edited; the owner adds a correction (a new row with a note).
 - **Import from a device (owner).** Attendance → Import from a device takes the CSV (`employee number, YYYY-MM-DD
   HH:MM[:SS], in|out`, a header line skipped), previews every line (new, already imported, unknown employee, not
-  readable, repeated), then imports the new lines in batches of 200 under ids derived from the line (`imp-` plus a
+  readable, repeated), then imports the new lines in batches (at most 200 items and 16,384 bytes, about 50 punches) under ids derived from the line (`imp-` plus a
   64-bit FNV-1a of employee number, time and direction), so a second run adds nothing and a lost reply is read back.
   An employee with no linked account gets `member_id` `-`.
 - **Retries.** Every member form holds a `client_ref` chosen once; after a timeout or conflict the screen reads the
@@ -283,7 +283,10 @@ preview (three tabs, balance from the ledger, time-only clock, withdraw a pendin
   and claims stay owner-only, so a member's lists show what they filed from their own view. A member's `at` is their
   device's clock; the host's own create time is in the row's history. Receipt upload and location wait for host
   capabilities. A member id longer than 128 characters or outside `[A-Za-z0-9_-]` cannot be stored on the employee
-  record, and linking says so.
+  record, and linking says so. Owner-imported punches for a linked member count toward that member's 5,000-row
+  limit; at the limit their clock-in answers "This was not saved". Updating an install from 0.4.0 is not a routine
+  update: new table options are a record-contract change (`storage_record_contract_changed`), so the owner approves
+  the version, as for 0.4.0.
 
 ## Local development
 
