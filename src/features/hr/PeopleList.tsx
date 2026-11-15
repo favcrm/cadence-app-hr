@@ -10,8 +10,8 @@ import { QueryRefresh, useHrQuery } from "./resources";
 
 const NO_RECORDS: HostRecord[] = [];
 
-export default function PeopleList({ scope, canWrite, onSelect, onNew }: {
-  scope: HostScope; canWrite: boolean; onSelect: (recordId: string) => void; onNew: () => void;
+export default function PeopleList({ scope, canWrite, onSelect, onNew, onStaffAccounts }: {
+  scope: HostScope; canWrite: boolean; onSelect: (recordId: string) => void; onNew: () => void; onStaffAccounts?: () => void;
 }) {
   const { t, formatNumber } = useLocale();
   const [query, setQuery] = useState("");
@@ -54,6 +54,7 @@ export default function PeopleList({ scope, canWrite, onSelect, onNew }: {
           <input id="hr-people-search" className="field hr-search-input" type="search" value={query} onChange={(e) => setQuery(e.target.value)}
             maxLength={120} autoComplete="off" placeholder={t("Search people…")} title={t("Search by name, employee number, email or department")} />
         </div>
+        {onStaffAccounts && <Button onClick={onStaffAccounts}>{t("Staff accounts")}</Button>}
         {canWrite && <Button variant="primary" className="hr-list-create" onClick={onNew}>{t("Add employee")}</Button>}
       </div>
       {loading && <Loading>{t("Reading the directory…")}</Loading>}

@@ -4,10 +4,12 @@
 //
 // Scenarios (?scenario=): loaded (default), empty, loading, refused, lost, stale, unreachable.
 // Language (?locale=): en or zh-TW, the two values the real host pushes.
+// Viewer (?viewer=): owner (default), member (linked to E-001) or unlinked: a member gets the AOS-564 gates (only
+// `row_owner` tables, only their own rows, host-named ids, no update); any other table answers `forbidden`.
 // Refusals use the codes the hosted board hands a frame: it narrows a host error by HTTP status
 // to unauthorized, forbidden, not_found, conflict, unavailable or failed. A unique-index
 // violation is a store error on the host, so it reaches the frame as `unavailable`.
-import { seedRows, seedTables, type SeedRow } from "./fixtures";
+import { seedRows, seedStaff, seedTables, type SeedRow } from "./fixtures";
 import type { Route } from "../../src/bridge/scope";
 
 const SCENARIOS = ["loaded", "empty", "loading", "refused", "lost", "stale", "unreachable"] as const;
@@ -19,18 +21,22 @@ const SEARCH: Record<string, string[]> = {
   claims: ["employee_name", "merchant", "description"], job_openings: ["title"], candidates: ["display_name", "email", "cv_text"], leave_entries: ["source_ref", "note"],
 };
 const OPEN: Record<string, string> = { leave_requests: "pending", claims: "submitted" };
-const SECTIONS = ["people", "policies", "leave", "claims", "payroll", "recruiting"];
+const SECTIONS = ["people", "policies", "leave", "claims", "payroll", "recruiting", "attendance"];
+const VIEWERS = ["owner", "member", "unlinked"] as const;
+const ROW_OWNER = ["attendance_punches", "staff_link_requests", "staff_snapshots", "staff_leave_requests", "staff_claims", "leave_withdrawals"];
 const ACTIONS = ["records.list", "records.show", "records.create", "records.update", "records.batch", "records.aggregate", "screen.route.patch"];
 const INSTALL = "install-preview";
 const DIGEST = `sha256:${"c".repeat(64)}`;
 
 const query = new URLSearchParams(location.search);
 const scenario: Scenario = SCENARIOS.includes(query.get("scenario") as Scenario) ? (query.get("scenario") as Scenario) : "loaded";
+const viewer = VIEWERS.includes(query.get("viewer") as (typeof VIEWERS)[number]) ? (query.get("viewer") as (typeof VIEWERS)[number]) : "owner";
+const MEMBER = viewer === "member" ? "usr_preview-amy-0001" : viewer === "unlinked" ? "usr_preview-new-0002" : null;
 const locale = LOCALES.includes(query.get("locale") as (typeof LOCALES)[number]) ? (query.get("locale") as "en" | "zh-TW") : "en";
 const frame = document.querySelector<HTMLIFrameElement>("#hr-frame")!;
 const status = document.querySelector<HTMLElement>("#status")!;
 
-for (const [id, values, current, key] of [["scenarios", SCENARIOS, scenario, "scenario"], ["locales", LOCALES, locale, "locale"]] as const) {
+for (const [id, values, current, key] of [["scenarios", SCENARIOS, scenario, "scenario"], ["locales", LOCALES, locale, "locale"], ["viewers", VIEWERS, viewer, "viewer"]] as const) {
   const nav = document.getElementById(id)!;
   for (const value of values) {
     const url = new URL(location.href);
@@ -41,7 +47,7 @@ for (const [id, values, current, key] of [["scenarios", SCENARIOS, scenario, "sc
   }
 }
 
-const data: Record<string, SeedRow[]> = scenario === "empty" ? {} : { employees: seedRows(), ...seedTables() };
+const data: Record<string, SeedRow[]> = scenario === "empty" ? {} : { employees: seedRows(), ...seedTables(), ...seedStaff("usr_preview-amy-0001", Math.floor(Date.now() / 1000)) };
 const table = (args: Record<string, unknown>) => (typeof args.table === "string" ? args.table : "employees");
 const rowsOf = (name: string) => (data[name] ??= []);
 let route: Route = readRoute();
@@ -75,9 +81,28 @@ const hit = (f: { field: string; op: string; value: unknown }, r: SeedRow) => {
     case "in": return Array.isArray(f.value) && f.value.includes(v);
     case "prefix": return typeof v === "string" && typeof f.value === "string" && v.startsWith(f.value);
     case "contains": return typeof v === "string" && typeof f.value === "string" && v.includes(f.value);
+    case "gte": return (v as number) >= (f.value as number);
+    case "lte": return (v as number) <= (f.value as number);
     default: return v === f.value;
   }
 };
+let memberSeq = 0;
+/** The AOS-564 member gates, before the owner's fixture logic runs. */
+function asMember(verb: string, args: Record<string, unknown>): Record<string, unknown> {
+  const names = verb === "records.batch" ? (Array.isArray(args.items) ? args.items.map((i: { table?: unknown }) => (typeof i.table === "string" ? i.table : "employees")) : []) : [table(args)];
+  // A member never updates: the host refuses it `owner_required`, which the board keeps non-fatal for a write.
+  if (verb === "records.update" && names.every((n) => ROW_OWNER.includes(n))) throw new Refused(refusal("owner_required", "Only a workspace owner can perform this action."));
+  if (names.some((n) => !ROW_OWNER.includes(n))) throw new Refused(refusal("forbidden", "This app's access is no longer available."));
+  if (verb === "records.create") {
+    if (args.record_id !== undefined) throw failed();
+    const profile = args.profile as Record<string, unknown>;
+    if ("member_id" in profile && profile.member_id !== MEMBER) throw new Refused(refusal("forbidden", "This app's access is no longer available."));
+    return { ...args, record_id: `mem_${(++memberSeq).toString(16).padStart(32, "0")}`, profile: { ...profile, member_id: MEMBER } };
+  }
+  if (verb === "records.batch") throw failed(); // a member's batch here only ever names record ids (the screen's probe)
+  return args;
+}
+const mine = (r: SeedRow, name: string) => MEMBER === null || !ROW_OWNER.includes(name) || r.profile.member_id === MEMBER;
 const failed = () => new Refused(refusal("failed", "Cadence refused this request. Inspect fresh status before retrying an effect."));
 const KINDS = ["accrual", "taken", "adjustment", "carry_forward", "expiry"];
 /** The ledger's declared rules: only creates, a closed kind, a signed non-zero count with the right sign, and an adjustment needs a note. */
@@ -94,13 +119,17 @@ const duplicateRef = (rows: SeedRow[], profile: SeedRow["profile"]) => rows.some
 function call(verb: string, args: Record<string, unknown>): unknown {
   if (scenario === "refused" && verb !== "screen.route.patch") throw new Refused(refusal("failed", "Cadence refused this request. Inspect fresh status before retrying an effect."));
   if (scenario === "lost" && verb !== "screen.route.patch") throw new Refused(refusal("unauthorized", "This app's access is no longer available."));
+  if (MEMBER !== null) args = asMember(verb, args);
   switch (verb) {
     case "records.list": {
       const q = typeof args.query === "string" ? args.query.toLowerCase() : null;
       const filters = Array.isArray(args.filters) ? (args.filters as { field: string; op: string; value: unknown }[]) : [];
       const name = table(args);
       const columns = SEARCH[name] ?? [];
-      const matched = rowsOf(name).filter((r) => (!q || columns.some((c) => String(r.profile[c] ?? "").toLowerCase().includes(q))) && filters.every((f) => hit(f, r))).sort((a, b) => (a.id < b.id ? -1 : 1));
+      const order = args.order_by as { field: string; direction?: string } | undefined;
+      const key = (r: SeedRow) => (order?.field === "created_at" ? rowsOf(name).indexOf(r) : order ? (r.profile[order.field] as string | number) ?? "" : r.id);
+      const matched = rowsOf(name).filter((r) => mine(r, name) && (!q || columns.some((c) => String(r.profile[c] ?? "").toLowerCase().includes(q))) && filters.every((f) => hit(f, r)))
+        .sort((a, b) => (key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0) * (order?.direction === "desc" ? -1 : 1));
       const after = typeof args.cursor === "string" ? matched.findIndex((r) => r.id === args.cursor) + 1 : 0;
       const limit = typeof args.limit === "number" ? args.limit : 25;
       const page = matched.slice(after, after + limit);
@@ -108,7 +137,7 @@ function call(verb: string, args: Record<string, unknown>): unknown {
       return { records: page.map(receipt), total: matched.length, truncated: more, next_cursor: more ? page.at(-1)!.id : null };
     }
     case "records.show": {
-      const row = rowsOf(table(args)).find((r) => r.id === args.record_id);
+      const row = rowsOf(table(args)).find((r) => r.id === args.record_id && mine(r, table(args)));
       if (!row) throw new Refused(refusal("not_found", "That record is not available."));
       return { record: receipt(row) };
     }
@@ -116,7 +145,7 @@ function call(verb: string, args: Record<string, unknown>): unknown {
       const id = String(args.record_id);
       const rows = rowsOf(table(args));
       if (rows.some((r) => r.id === id)) throw new Refused(refusal("conflict", "That changed. Refresh before trying again."));
-      const profile = { ...(table(args) === "employees" ? { member_id: null, manager_id: null } : {}), ...(args.profile as Record<string, SeedRow["profile"][string]>) } as SeedRow["profile"];
+      const profile = { ...(table(args) === "employees" ? { member_id: null, confirmed_member_id: null, manager_id: null } : {}), ...(args.profile as Record<string, SeedRow["profile"][string]>) } as SeedRow["profile"];
       // The write rule the descriptor declares: a staged create can only be open.
       if (OPEN[table(args)] && profile.status !== undefined && profile.status !== OPEN[table(args)]) throw new Refused(refusal("failed", "Cadence refused this request. Inspect fresh status before retrying an effect."));
       if (OPEN[table(args)]) profile.status = OPEN[table(args)]!;
@@ -131,6 +160,8 @@ function call(verb: string, args: Record<string, unknown>): unknown {
       return { record: receipt(row) };
     }
     case "records.update": {
+      // The append-only staff tables refuse every update before a row is read (the screen's owner-or-member probe).
+      if (["attendance_punches", "staff_link_requests", "staff_snapshots", "leave_withdrawals"].includes(table(args))) throw new Refused(refusal("conflict", "That changed. Refresh before trying again."));
       const rows = rowsOf(table(args));
       const row = rows.find((r) => r.id === args.record_id);
       if (!row) throw new Refused(refusal("not_found", "That record is not available."));
@@ -152,7 +183,7 @@ function call(verb: string, args: Record<string, unknown>): unknown {
       const seenIds = new Set<string>();
       for (const item of batch) {
         const name = typeof item.table === "string" ? item.table : "employees";
-        if (!["leave_entries", "payroll_runs", "payroll_lines"].includes(name) || typeof item.record_id !== "string" || !item.profile) throw failed();
+        if (!["leave_entries", "payroll_runs", "payroll_lines", ...ROW_OWNER].includes(name) || typeof item.record_id !== "string" || !item.profile) throw failed();
         if (name === "leave_entries") ledgerRule(item.profile);
         const all = [...rowsOf(name), ...(staged[name] ??= [])];
         if (seenIds.has(item.record_id) || all.some((r) => r.id === item.record_id)) throw new Refused(refusal("conflict", "That changed. Refresh before trying again."));
@@ -169,7 +200,7 @@ function call(verb: string, args: Record<string, unknown>): unknown {
       const by = Array.isArray(args.group_by) ? (args.group_by as string[]) : [];
       const sums = Array.isArray(args.sum) ? (args.sum as string[]) : [];
       const groups = new Map<string, { key: Record<string, unknown>; count: number; sums: Record<string, number> }>();
-      for (const r of rowsOf(table(args)).filter((row) => filters.every((f) => hit(f, row)))) {
+      for (const r of rowsOf(table(args)).filter((row) => mine(row, table(args)) && filters.every((f) => hit(f, row)))) {
         const key = Object.fromEntries(by.map((c) => [c, r.profile[c] ?? null]));
         const id = JSON.stringify(key);
         const g = groups.get(id) ?? { key, count: 0, sums: Object.fromEntries(sums.map((c) => [c, 0])) };
@@ -203,7 +234,7 @@ function navigate(patch: Record<string, unknown>) {
 function handle(request: Record<string, unknown>) {
   if (request.v === 1 && request.op === "ready") {
     if (scenario !== "unreachable") sendProjection();
-    status.textContent = `${scenario} · synthetic data held in this tab`;
+    status.textContent = `${scenario} · ${viewer} · synthetic data held in this tab`;
     return;
   }
   // The leave hint: the real board asks before navigating away while it is true.

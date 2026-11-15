@@ -8,7 +8,7 @@ import { cleanArgs } from "../../src/bridge/services.ts";
 export interface Row { id: string; revision: number; profile: Record<string, any> }
 export type Call = { verb: string; args: Record<string, any> };
 export const scope = { installId: "install-test", digest: "sha256:" + "a".repeat(64) };
-const TABLES = ["employees", "leave_types", "leave_requests", "leave_entries"] as const;
+const TABLES = ["employees", "leave_types", "leave_requests", "staff_leave_requests", "leave_entries"] as const;
 
 export function makeHost(opts: { uniqueStatus?: number; pageSize?: number } = {}) {
   const tables: Record<string, Row[]> = Object.fromEntries(TABLES.map((t) => [t, [] as Row[]]));

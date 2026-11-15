@@ -2,7 +2,9 @@ import {
   CANDIDATE, CLAIM, CLAIM_OPEN, fromHalfDays, fromMinor, LEAVE_OPEN, LEAVE_REQUEST, LEAVE_TYPE, OPENING, OPENING_STATUSES, POLICY, POLICY_STATUSES, STAGES,
 } from "../../domain/records";
 import { chip } from "./chip";
-import type { View } from "./RecordsPane";
+import type { ReactNode } from "react";
+import type { StaffCtx, View } from "./RecordsPane";
+import { linkedAccount } from "./staff";
 
 const s = (v: unknown) => (typeof v === "string" && v !== "" ? v : "—");
 const n = (v: unknown) => (Number.isSafeInteger(v) ? (v as number) : null);
@@ -85,3 +87,29 @@ export function candidatesView(openingId: string | null, titles: Record<string, 
     extra: (p, t) => [{ key: "stage", term: t("Stage"), value: chip(p.stage, t) }, { key: "opening", term: t("Opening"), value: typeof p.opening_id === "string" ? titles[p.opening_id] ?? "—" : "—" }],
   };
 }
+
+// Staff self-service (0.5.0): what staff filed from their own view. The owner decides them here; nobody edits them.
+// A member writes every column but `member_id`, so the employee is named from the employee record by `employee_id`,
+// and a row whose filing account is not that employee's confirmed link is flagged.
+const STAFF_NOTE = (t: (x: string) => string) => ({ key: "filed", term: t("Filed by"), value: t("The employee, from their own view of HR") });
+function staffEmployee(p: Record<string, unknown>, t: (x: string) => string, ctx?: StaffCtx): ReactNode {
+  const e = typeof p.employee_id === "string" ? ctx?.directory?.get(p.employee_id) : undefined;
+  if (ctx?.directory === null || ctx?.directory === undefined) return "…";
+  const ok = e !== undefined && linkedAccount(e) !== null && linkedAccount(e) === p.member_id;
+  return <>{e ? `${e.name || "—"} · ${e.employeeNo || "—"}` : t("Unknown employee")}{!ok && <> <span className="chip" data-status="rejected">{t("Not from this employee's linked account")}</span></>}</>;
+}
+const staffRows = (base: View, p: Record<string, unknown>, t: (x: string) => string, ctx?: StaffCtx) => [
+  { key: "employee", term: t("Employee"), value: staffEmployee(p, t, ctx) },
+  { key: "typed", term: t("Name the employee typed"), value: s(p.employee_name) },
+  ...base.extra!(p, t).filter((row) => row.key !== "employee"), STAFF_NOTE(t),
+];
+export const staffLeaveRequestsView: View = {
+  ...leaveRequestsView, id: "staff-leave", title: "Staff requests", spec: { ...LEAVE_REQUEST, table: "staff_leave_requests" }, searchHint: "Search staff requests…", newId: "slv", staff: true,
+  columns: (p, t, ctx) => leaveRequestsView.columns(p, t).map((c) => (c.key === "employee" ? { ...c, cell: staffEmployee(p, t, ctx) } : c)),
+  extra: (p, t, ctx) => staffRows(leaveRequestsView, p, t, ctx),
+};
+export const staffClaimsView: View = {
+  ...claimsView, id: "staff-claims", title: "Staff claims", spec: { ...CLAIM, table: "staff_claims" }, searchHint: "Search staff claims…", newId: "scl", staff: true,
+  columns: (p, t, ctx) => claimsView.columns(p, t).map((c) => (c.key === "employee" ? { ...c, cell: staffEmployee(p, t, ctx) } : c)),
+  extra: (p, t, ctx) => staffRows(claimsView, p, t, ctx),
+};

@@ -1,8 +1,8 @@
 ---
 app: hr
 title: HR
-version: '0.4.0'
-summary: People, policies, leave balances, expense claims, monthly payroll with MPF and recruiting, run by the owner with an agent that reads and stages changes.
+version: '0.5.0'
+summary: People, policies, leave, claims, MPF payroll, attendance and recruiting, with a staff view for leave, claims and clock-in, and an agent that stages changes.
 needs:
   connections: []
   requires:
@@ -13,20 +13,20 @@ listing:
   tags: [hr, leave, claims, payroll, recruiting]
   publisher:
     name: Cadence
-  about: HR keeps your team directory, company policies, leave, expense claims, monthly payroll and recruiting. Leave balances are a ledger. Payroll computes MPF in the screen from rate rows you store, and approved runs and claims can be posted to the Accounting app when it is installed. The owner decides every leave request, claim and payroll run. The chat agent answers policy questions with the policy title and date, explains payroll and stages drafts for the owner to approve; it never approves or computes pay. Records are owner-only. No identity number, bank or medical data is stored.
+  about: HR keeps your team directory, policies, leave, expense claims, monthly payroll, attendance and recruiting. Leave balances are a ledger; payroll computes MPF in the screen and can post to the Accounting app. Staff linked to their employee record use their own view to request leave, submit claims and clock in and out (time only), seeing only their own records. The owner decides every request, claim and payroll run. The chat agent answers policy questions with the policy title and date and stages drafts; it never approves or computes pay. No identity number, bank or medical data is stored.
   can:
-    - Keep employees and policies; answer a policy question with its title and date
+    - Keep employees, policies, openings and candidates; answer a policy question with its title and date
     - Queue leave and claims for the owner; leave balances are a ledger the agent reads like the screen
     - Run monthly payroll with MPF computed by tested code; post approved runs and claims to Accounting
-    - Keep openings and candidates; the agent looks records up, stages changes and never moves a stage
+    - Staff request leave, submit claims and clock in from their phone, seeing only their own records
     - Draft a short welcome note for a new employee from facts you paste (text only; it sends nothing)
   screenshots: []
   setup: []
   data:
     stores:
-      - Your employee directory, including names, employee numbers, work email addresses and phone numbers
-      - Your company policy text
+      - Your employee directory (names, employee numbers, work email, phone, linked member account) and company policy text
       - Leave requests, a leave ledger and expense claims with employee names, dates, merchants and amounts
+      - Clock-in and clock-out times (no location), from staff, an attendance device import or your corrections
       - Monthly salaries, MPF exemption flags, payroll runs with each employee's pay and MPF, and MPF rate rows
       - Candidates for your job openings, including names, contact details and the text of their CVs, who are not your employees
     personal: true
@@ -47,16 +47,24 @@ Release 0.3.0 adds leave balances as an append-only ledger (see Leave ledger bel
 Release 0.4.0 adds monthly payroll with MPF and posting to the Accounting app (see Payroll below): five tables, a
 Payroll tab and two skills, `payroll-prep` and `hr-posting`.
 
+Release 0.5.0 adds staff self-service and clock-in (打卡): a member of the workspace who is linked to an employee
+record opens HR and sees only My leave, My claims and Clock, over their own rows (see Staff self-service below). The
+owner gets Leave → Staff requests, Claims → Staff claims, People → Staff accounts, an Attendance tab with a device
+import and corrections, and the `attendance-review` skill.
+
 The package requires `app-screens`, `screen-records`, `screen-startup` and `app-storage` v1. The screen under
 `screens/hr/` uses the host's pinned screen UI and the released app-kit receiver; Cadence keeps scope, storage,
 approvals and every write.
 
 ## Data
 
-`app-storage.json` declares `app-storage/v1` at `schema_version` 4 with four migrations pinned by sha256:
+`app-storage.json` declares `app-storage/v1` at `schema_version` 7 with seven migrations pinned by sha256:
 `storage/001-initial.json` (`employees`, unchanged from 0.1.0), `storage/002-hr-records.json` (the six 0.2.0
 tables), `storage/003-leave-ledger.json` (`leave_entries`) and `storage/004-payroll.json` (`rate_tables`, `salaries`,
-`payroll_runs`, `payroll_lines`, `postings`). Its `tables` map makes every table owner-only and gives
+`payroll_runs`, `payroll_lines`, `postings`), `storage/005-attendance.json` (`attendance_punches`) and
+`storage/006-self-service.json` (`staff_link_requests`, `staff_snapshots`, `staff_leave_requests`, `staff_claims`,
+`leave_withdrawals`) and `storage/007-link-confirmation.json` (the nullable `employees.confirmed_member_id`). The six
+0.5.0 tables declare `row_owner: member_id` (below). Its `tables` map makes every table owner-only and gives
 `leave_requests` and `claims` a write rule: a staged create can only be open, and a decided request or claim cannot
 change, which freezes an approved claim's amount. Money is an integer in minor units with a currency; leave is an integer number of half days. Dates are
 text holding `YYYY-MM-DD`.
@@ -102,10 +110,53 @@ skill read that same aggregate.
   earlier one, and `hr-posting` stops while another run of the month stands in the journal unreversed. With the
   Accounting app absent, posting is unavailable and the rest of HR works.
 
+## Staff self-service
+
+- **Member-owned rows.** Each 0.5.0 table is `read_role: owner` and declares `row_owner: member_id`. A member who is
+  not an owner creates rows there and reads only rows whose `member_id` is their own id, which the host stamps from the
+  board session and never takes from the call; the host names those rows (`mem_` ids) and a member never updates. Every
+  other table stays owner-only, so a member reads no salary, payroll, ledger, directory or owner-filed row.
+- **Why new tables.** `row_owner` needs a text column that is not nullable, has no default and holds 200 characters;
+  `leave_requests` and `claims` have none, and the grammar cannot add one to a table that holds rows (a non-null new
+  column needs a default; a backfill of the owner column is refused). So staff requests and claims are
+  `staff_leave_requests` and `staff_claims`: the same columns and the same write rules (filed open, frozen once
+  decided), plus `member_id` and a `client_ref` retry key.
+- **Owner or member.** The host pushes no role, and a member's read of an owner-only table is refused 403, which closes
+  the frame. The screen asks once with a `records.update` of `viewer-probe` in `leave_withdrawals`: the owner meets
+  the append-only rule (409) and a member is refused `owner_required` (which the board keeps non-fatal for a write),
+  both before any row is read. Any other answer is no role: the screen shows a retry and neither view. A board
+  without `records.update` keeps the 0.4.0 owner screen.
+- **Linking.** A member's view starts unlinked and offers only a link request (`staff_link_requests`: the name they
+  give, an optional employee number, and a code from their account id); that is a screen choice, and the owner's
+  checks are the control. The owner checks the code and links them on People → Staff accounts, which writes the
+  account id to the employee record's `member_id` and `confirmed_member_id` (both owner-only) and then a
+  `staff_snapshots` row (`snap-` id) naming the employee and the member's leave balances. A link counts only when the
+  two columns are equal; a `member_id` set before 0.5.0 needs the owner's confirmation first. Owner screens never scan
+  a member-writable table: Staff accounts groups requests by account with the host's aggregate. A linked account can read the owner's notes on its
+  own rows, and keeps what was published to it after unlinking.
+- **Balances.** Members cannot read `leave_entries`. The owner's screen publishes each linked member's balances as a
+  snapshot from the same `records.aggregate` the Balances tab reads, on linking, after deciding that member's leave
+  request, and on "Update staff balances". The newest is the host's newest row, not the owner device's clock. The staff
+  view shows it with its "as of" time. It trusts only snapshot rows whose id the owner's screen named; a member cannot
+  name a record id.
+- **Decisions.** The owner decides staff rows on the new sub-tabs. Approving first checks that the row's `member_id` is
+  the account linked on that employee's record, since a member chooses every other column. A staff leave approval
+  goes through the ledger exactly like an owner request. A member withdraws a pending request with a
+  `leave_withdrawals` row; the owner cannot approve it, and Reject closes it as cancelled. Decided requests and
+  submitted claims cannot be changed by staff (a member never updates).
+- **Clock (打卡).** Time only: the app frame cannot read the device location (CAD-2334), so `lat_e7`, `lng_e7` and
+  `accuracy_m` stay null. `attendance_punches` is append-only. A punch's record id says who wrote it: `imp-` the
+  owner's device import, `cor-` the owner's correction, anything else the member's own punch. Times are Hong Kong time.
+- **Import.** Attendance → Import from a device reads a pasted CSV (employee number, `YYYY-MM-DD HH:MM`, in or out),
+  shows every line's result first, and imports the new lines under fixed ids, so running it again adds nothing.
+- **Limits.** The host has no delete or archive verb, so punches are kept: a table holds at most 100,000 rows (about
+  two years at 50 staff and four punches a day) and a member at most 5,000 rows per table. A yearly archive waits for a
+  host path.
+
 ## Agent procedure
 
 Read the skills with `app_skill`: `hr-policy-answers`, `leave-desk`, `claim-intake`, `job-description`,
-`recruit-screening`, `payroll-prep` and `hr-posting`.
+`recruit-screening`, `payroll-prep`, `hr-posting` and `attendance-review`.
 
 1. Look records up first with `records.list` and an exact `eq` filter; read a record's `revision` with
    `records.show` before any update. Name the `table` for every table except `employees`.
@@ -121,3 +172,6 @@ Read the skills with `app_skill`: `hr-policy-answers`, `leave-desk`, `claim-inta
 8. Never compute pay, MPF or a posting amount. Never stage a write to `rate_tables`, `salaries`, `payroll_runs` or
    `payroll_lines`; the only payroll write is `hr-posting`'s update of a `postings` row after the Accounting journal
    shows the entry.
+9. Never stage a write to `attendance_punches`, `staff_link_requests`, `staff_snapshots`, `staff_leave_requests`,
+   `staff_claims` or `leave_withdrawals`. Staff file their own rows from the screen; the owner links accounts, decides
+   staff rows, imports and corrects punches in the screen.

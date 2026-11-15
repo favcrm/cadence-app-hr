@@ -18,6 +18,8 @@ import { useLocale } from "./locale";
 import RecordForm, { optionLabel, type RecordProblem } from "./RecordForm";
 import { listArgs, showArgs } from "./recordQueries";
 import { addStarterLeaveTypes, createRecord, decide, problemFor, setField, starterReason, updateRecord, type Problem } from "./recordsSubmit";
+import { decideStaff, readDirectory, type DirectoryRow } from "./staff";
+import { useHrLoader } from "./resources";
 import { QueryRefresh, useHrQuery } from "./resources";
 import StarterLeaveTypes, { type StarterState } from "./StarterLeaveTypes";
 
@@ -34,18 +36,27 @@ export interface View {
   kind: "plain" | "decision" | "candidate";
   /** The status value that is still open to a decision. */
   open?: string;
-  columns: (p: Cells, t: (s: string) => string) => { key: string; header: string; cell: ReactNode; className?: string }[];
+  /** `ctx` carries the directory for a staff view, so a row's employee is named from the employee record. */
+  columns: (p: Cells, t: (s: string) => string, ctx?: StaffCtx) => { key: string; header: string; cell: ReactNode; className?: string }[];
   /** Detail rows beyond the form's own fields. */
-  extra?: (p: Cells, t: (s: string) => string) => { key: string; term: string; value: ReactNode }[];
+  extra?: (p: Cells, t: (s: string) => string, ctx?: StaffCtx) => { key: string; term: string; value: ReactNode }[];
   filters?: RecordFilter[];
   createExtra?: Record<string, string>;
   /** An empty, unfiltered list offers the owner this starter set (the leave types). */
   starter?: "leave-types";
   /** When false the New button is disabled with this reason. */
   blockedNew?: string;
+  /** Rows staff filed from their own view (0.5.0): no New and no Edit; a decision checks the filing account first. */
+  staff?: boolean;
   newId: string;
 }
 const NO_RECORDS: HostRecord[] = [];
+/** The employee records by id, for naming a staff row's employee and checking its filing account. */
+export interface StaffCtx { directory: Map<string, DirectoryRow> | null }
+function useStaffCtx(scope: HostScope, view: View): StaffCtx {
+  const data = useHrLoader(scope, "staff-directory", { staff: view.staff === true }, async () => (view.staff ? new Map((await readDirectory(scope)).map((e) => [e.id, e])) : null));
+  return { directory: data.data ?? null };
+}
 /** The confirm step of each owner decision. Both are final in this release, so both are confirmed. */
 const LEAVE_APPROVE_TEXT = "Approving records this leave in the balance: the request's days are deducted once, even if you have to approve again after an error. An approved request cannot be changed afterwards in this release. You may leave a short note for the record.";
 const DECISION_TEXT: Record<Decision, { title: string; body: string; confirm: string }> = {
@@ -85,8 +96,9 @@ export default function RecordsPane({ scope, canWrite, view, recordId, onSelect,
     setCursors((known) => { const copy = known.slice(0, page); copy[page] = nextCursor; return copy; });
     setPage(page + 1);
   };
-  const columns = (r: HostRecord) => view.columns((r.profile ?? {}) as Cells, t);
-  const head = records[0] ? columns(records[0]) : view.columns({}, t);
+  const ctx = useStaffCtx(scope, view);
+  const columns = (r: HostRecord) => view.columns((r.profile ?? {}) as Cells, t, ctx);
+  const head = records[0] ? columns(records[0]) : view.columns({}, t, ctx);
   const summary = t("{count} on this page").replace("{count}", formatNumber(records.length)) + (total !== null ? ` · ${t("{total} in total").replace("{total}", formatNumber(total))}` : "");
   const filtered = status !== "all" || committed !== "";
   // The starter load's state lives here, not in the panel, so a search or a refresh cannot lose a running load or start a second.
@@ -120,7 +132,7 @@ export default function RecordsPane({ scope, canWrite, view, recordId, onSelect,
               options={["all", ...view.filter.values].map((value) => ({ value, label: t(value === "all" ? "All" : optionLabel(value)) }))} />
           </div>
         )}
-        {canWrite && <Button variant="primary" className="hr-list-create" disabled={view.blockedNew !== undefined} title={view.blockedNew ? t(view.blockedNew) : undefined} onClick={() => setCreating(true)}>{t(view.newLabel)}</Button>}
+        {canWrite && !view.staff && <Button variant="primary" className="hr-list-create" disabled={view.blockedNew !== undefined} title={view.blockedNew ? t(view.blockedNew) : undefined} onClick={() => setCreating(true)}>{t(view.newLabel)}</Button>}
       </div>
       {view.blockedNew && canWrite && <p className="text-label text-ink-400">{t(view.blockedNew)}</p>}
       {loading && <Loading>{t("Reading the records…")}</Loading>}
@@ -136,7 +148,7 @@ export default function RecordsPane({ scope, canWrite, view, recordId, onSelect,
         </>
       ) : (
         <EmptyState name={view.id} title={t(filtered ? "Nothing matches this view" : "Nothing here yet")}>
-          {filtered ? t("Clear the search or choose All to see everything.") : t(canWrite ? "Add the first one with the button above." : "Nothing has been added yet.")}
+          {filtered ? t("Clear the search or choose All to see everything.") : view.staff ? t("What staff file from their own view of HR appears here.") : t(canWrite ? "Add the first one with the button above." : "Nothing has been added yet.")}
         </EmptyState>
       ))}
       <span role="status"><QueryRefresh updating={state.updating} /></span>
@@ -199,6 +211,7 @@ function NewRecord({ scope, view, canWrite, showBalance, onCreated, onCancel }: 
 function RecordDrawer({ scope, view, recordId, canWrite, onClose }: { scope: HostScope; view: View; recordId: string; canWrite: boolean; onClose: () => void }) {
   const { t } = useLocale();
   const state = useHrQuery(scope, "records.show", showArgs(view, recordId), parseRecord);
+  const ctx = useStaffCtx(scope, view);
   const { loading, error } = state;
   const record = state.data;
   const [editing, setEditing] = useState(false);
@@ -207,6 +220,7 @@ function RecordDrawer({ scope, view, recordId, canWrite, onClose }: { scope: Hos
   const [confirming, setConfirming] = useState<Decision | null>(null);
   const [note, setNote] = useState("");
   const [stage, setStage] = useState("");
+  const [unpublished, setUnpublished] = useState(false);
 
   const profile = (record?.profile ?? {}) as Cells;
   const isOpen = view.kind === "decision" && statusOf(profile) === view.open;
@@ -216,11 +230,13 @@ function RecordDrawer({ scope, view, recordId, canWrite, onClose }: { scope: Hos
     setPending(true); setProblem(null);
     void work().then((next) => { if (next) state.store.write(() => next); after?.(); }).catch((e: unknown) => fail(e, "update")).finally(() => setPending(false));
   };
-  const decideNow = (decision: Decision, text: string) => record && run(() => decide(scope, view.spec, record, decision, todayLocal(), text), () => { setConfirming(null); setNote(""); });
+  const decideNow = (decision: Decision, text: string) => record && run(() => view.staff
+    ? decideStaff(scope, view.spec.table, record, decision, todayLocal(), text, Math.floor(Date.now() / 1000)).then((r) => { setUnpublished(!r.published); return r.record; })
+    : decide(scope, view.spec, record, decision, todayLocal(), text), () => { setConfirming(null); setNote(""); });
   const confirm = (decision: Decision) => { setProblem(null); setNote(""); setConfirming(decision); };
   const values = record ? viewValues(view.spec, record.profile) : null;
   const spec = view.spec;
-  const title = record ? view.columns(profile, t)[0]?.cell : null;
+  const title = record ? view.columns(profile, t, ctx)[0]?.cell : null;
   const screening = view.kind === "candidate" ? viewScreening(profile.screening) : null;
 
   const items = record && values ? [
@@ -228,7 +244,7 @@ function RecordDrawer({ scope, view, recordId, canWrite, onClose }: { scope: Hos
       key: f.key, term: t(f.label.replace(" (optional)", "")),
       value: f.kind === "accrual" ? <AccrualSummary value={profile[f.column!]} /> : f.kind === "code" ? chip(values[f.key], t) : f.kind === "longtext" ? <span className="hr-prose">{values[f.key] || "—"}</span> : <span className="num">{values[f.key] || "—"}</span>,
     })),
-    ...(view.extra ? view.extra(profile, t) : []),
+    ...(view.extra ? view.extra(profile, t, ctx) : []),
   ] : [];
   const tabs: DrawerTab[] = record ? [
     { id: "overview", label: t("Overview"), panel: (
@@ -253,14 +269,15 @@ function RecordDrawer({ scope, view, recordId, canWrite, onClose }: { scope: Hos
           </section>
         )}
         {view.kind === "decision" && !isOpen && <p className="text-label text-ink-400 hr-sect">{t("This record is decided and cannot be changed.")}</p>}
+        {unpublished && <Notice className="mt-2">{t("The decision is saved, but the employee's balance in their own view was not updated. Use Update staff balances in People → Staff accounts.")}</Notice>}
         {problem && <ErrorNotice className="mt-2" bare>{problem.message}{problem.reload && <> <button type="button" className="lnk" onClick={reload}>{t("Reload this record")}</button></>}</ErrorNotice>}
       </>
     ) },
     { id: "details", label: t("Details"), panel: <p className="num text-micro text-ink-500">{t("Record")} <span className="num">{recordId}</span> · {t("revision")} r{record.revision} · {t("digest")} {record.digest.slice(0, 18)}…</p> },
   ] : [];
-  const canEdit = canWrite && record !== null && (view.kind !== "decision" || isOpen);
+  const canEdit = canWrite && record !== null && !view.staff && (view.kind !== "decision" || isOpen);
   const menu: DrawerMenuItem[] = isOpen && canWrite ? [{ key: "reject", label: t("Reject…"), destructive: true, onSelect: () => confirm("rejected") }] : [];
-  const dialog = confirming ? (confirming === "approved" && spec.table === "leave_requests" ? { ...DECISION_TEXT.approved, body: LEAVE_APPROVE_TEXT } : DECISION_TEXT[confirming]) : null;
+  const dialog = confirming ? (confirming === "approved" && (spec.table === "leave_requests" || spec.table === "staff_leave_requests") ? { ...DECISION_TEXT.approved, body: LEAVE_APPROVE_TEXT } : DECISION_TEXT[confirming]) : null;
 
   return (
     <>
@@ -288,7 +305,8 @@ function RecordDrawer({ scope, view, recordId, canWrite, onClose }: { scope: Hos
         <ConfirmDialog title={t(dialog.title)} confirmLabel={t(dialog.confirm)} pending={pending} error={problem?.message ?? null}
           body={<div className="grid gap-2"><p>{t(dialog.body)}</p>
             <label className="text-label" htmlFor="hr-decision-note">{t("Note (optional)")}</label>
-            <textarea id="hr-decision-note" className="field hr-textarea" rows={3} maxLength={500} value={note} onChange={(e) => setNote(e.target.value)} /></div>}
+            <textarea id="hr-decision-note" className="field hr-textarea" rows={3} maxLength={500} value={note} onChange={(e) => setNote(e.target.value)} />
+            {view.staff && <p className="text-micro text-ink-500">{t("The employee's linked account can read this note with its own request or claim.")}</p>}</div>}
           onConfirm={() => decideNow(confirming, note)} onCancel={() => { setConfirming(null); setProblem(null); }} />
       )}
     </>

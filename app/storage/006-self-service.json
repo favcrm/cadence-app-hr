@@ -1,0 +1,84 @@
+{
+  "version": 6,
+  "operations": [
+    {
+      "op": "create_table",
+      "table": "staff_link_requests",
+      "columns": [
+        {"name": "member_id", "type": "text", "nullable": false, "max_length": 200},
+        {"name": "display_name", "type": "text", "nullable": false, "max_length": 120},
+        {"name": "employee_no", "type": "text", "nullable": true, "max_length": 32, "json_schema": {"type": "string", "pattern": "^[A-Z0-9_-]{1,32}$"}},
+        {"name": "requested_at", "type": "integer", "nullable": false, "json_schema": {"type": "integer", "minimum": 946684800, "maximum": 4102444800}}
+      ]
+    },
+    {"op": "create_index", "table": "staff_link_requests", "name": "staff_link_requests_member", "columns": ["member_id"], "unique": false},
+    {
+      "op": "create_table",
+      "table": "staff_snapshots",
+      "columns": [
+        {"name": "member_id", "type": "text", "nullable": false, "max_length": 200},
+        {"name": "employee_id", "type": "text", "nullable": true, "max_length": 128, "json_schema": {"type": "string", "pattern": "^[A-Za-z0-9_-]{1,128}$"}},
+        {"name": "employee_name", "type": "text", "nullable": true, "max_length": 120},
+        {"name": "employee_no", "type": "text", "nullable": true, "max_length": 32, "json_schema": {"type": "string", "pattern": "^[A-Z0-9_-]{1,32}$"}},
+        {"name": "as_of", "type": "integer", "nullable": false, "json_schema": {"type": "integer", "minimum": 946684800, "maximum": 4102444800}},
+        {"name": "leave", "type": "json", "nullable": true}
+      ]
+    },
+    {"op": "create_index", "table": "staff_snapshots", "name": "staff_snapshots_member", "columns": ["member_id"], "unique": false},
+    {
+      "op": "create_table",
+      "table": "staff_leave_requests",
+      "columns": [
+        {"name": "employee_id", "type": "text", "nullable": false, "max_length": 128, "json_schema": {"type": "string", "pattern": "^[A-Za-z0-9_-]{1,128}$"}},
+        {"name": "member_id", "type": "text", "nullable": false, "max_length": 200},
+        {"name": "employee_name", "type": "text", "nullable": false, "max_length": 120},
+        {"name": "leave_type", "type": "text", "nullable": false, "max_length": 32, "json_schema": {"type": "string", "pattern": "^[A-Z0-9_-]{1,32}$"}},
+        {"name": "start_date", "type": "text", "nullable": false, "max_length": 10, "json_schema": {"type": "string", "pattern": "^[0-9-]{10}$"}},
+        {"name": "end_date", "type": "text", "nullable": false, "max_length": 10, "json_schema": {"type": "string", "pattern": "^[0-9-]{10}$"}},
+        {"name": "half_days", "type": "integer", "nullable": false, "json_schema": {"type": "integer", "minimum": 1, "maximum": 1000}},
+        {"name": "reason", "type": "text", "nullable": false, "default": "", "max_length": 500},
+        {"name": "status", "type": "text", "nullable": false, "default": "pending", "max_length": 32, "json_schema": {"type": "string", "pattern": "^[a-z0-9_]{1,32}$"}},
+        {"name": "decided_on", "type": "text", "nullable": true, "max_length": 10, "json_schema": {"type": "string", "pattern": "^[0-9-]{10}$"}},
+        {"name": "decision_note", "type": "text", "nullable": true, "max_length": 500},
+        {"name": "client_ref", "type": "text", "nullable": false, "max_length": 64, "json_schema": {"type": "string", "pattern": "^[A-Za-z0-9_-]{1,64}$"}}
+      ]
+    },
+    {"op": "create_index", "table": "staff_leave_requests", "name": "staff_leave_requests_client_ref", "columns": ["member_id", "client_ref"], "unique": true},
+    {"op": "create_index", "table": "staff_leave_requests", "name": "staff_leave_requests_member", "columns": ["member_id"], "unique": false},
+    {"op": "create_index", "table": "staff_leave_requests", "name": "staff_leave_requests_status", "columns": ["status"], "unique": false},
+    {
+      "op": "create_table",
+      "table": "staff_claims",
+      "columns": [
+        {"name": "employee_id", "type": "text", "nullable": false, "max_length": 128, "json_schema": {"type": "string", "pattern": "^[A-Za-z0-9_-]{1,128}$"}},
+        {"name": "member_id", "type": "text", "nullable": false, "max_length": 200},
+        {"name": "employee_name", "type": "text", "nullable": false, "max_length": 120},
+        {"name": "claim_date", "type": "text", "nullable": false, "max_length": 10, "json_schema": {"type": "string", "pattern": "^[0-9-]{10}$"}},
+        {"name": "category", "type": "text", "nullable": false, "default": "other", "max_length": 32, "json_schema": {"type": "string", "pattern": "^[a-z0-9_]{1,32}$"}},
+        {"name": "merchant", "type": "text", "nullable": false, "default": "", "max_length": 120},
+        {"name": "amount_minor", "type": "integer", "nullable": false, "json_schema": {"type": "integer", "minimum": 1, "maximum": 99999999999}},
+        {"name": "currency", "type": "text", "nullable": false, "max_length": 3, "json_schema": {"type": "string", "pattern": "^[A-Z]{3}$"}},
+        {"name": "description", "type": "text", "nullable": false, "default": "", "max_length": 500},
+        {"name": "receipt_ref", "type": "text", "nullable": true, "max_length": 200},
+        {"name": "status", "type": "text", "nullable": false, "default": "submitted", "max_length": 32, "json_schema": {"type": "string", "pattern": "^[a-z0-9_]{1,32}$"}},
+        {"name": "decided_on", "type": "text", "nullable": true, "max_length": 10, "json_schema": {"type": "string", "pattern": "^[0-9-]{10}$"}},
+        {"name": "decision_note", "type": "text", "nullable": true, "max_length": 500},
+        {"name": "client_ref", "type": "text", "nullable": false, "max_length": 64, "json_schema": {"type": "string", "pattern": "^[A-Za-z0-9_-]{1,64}$"}}
+      ]
+    },
+    {"op": "create_index", "table": "staff_claims", "name": "staff_claims_client_ref", "columns": ["member_id", "client_ref"], "unique": true},
+    {"op": "create_index", "table": "staff_claims", "name": "staff_claims_member", "columns": ["member_id"], "unique": false},
+    {"op": "create_index", "table": "staff_claims", "name": "staff_claims_status", "columns": ["status"], "unique": false},
+    {
+      "op": "create_table",
+      "table": "leave_withdrawals",
+      "columns": [
+        {"name": "member_id", "type": "text", "nullable": false, "max_length": 200},
+        {"name": "request_id", "type": "text", "nullable": false, "max_length": 128, "json_schema": {"type": "string", "pattern": "^[A-Za-z0-9_-]{1,128}$"}},
+        {"name": "withdrawn_at", "type": "integer", "nullable": false, "json_schema": {"type": "integer", "minimum": 946684800, "maximum": 4102444800}}
+      ]
+    },
+    {"op": "create_index", "table": "leave_withdrawals", "name": "leave_withdrawals_request", "columns": ["member_id", "request_id"], "unique": true},
+    {"op": "create_index", "table": "leave_withdrawals", "name": "leave_withdrawals_member", "columns": ["member_id"], "unique": false}
+  ]
+}

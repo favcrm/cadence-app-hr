@@ -86,3 +86,36 @@
 .hr .num[data-negative="true"]::before { content: "\26A0\00a0"; }
 .hr .hr-amount { width: 7.5rem; min-width: 6rem; }
 .hr .hr-pay-table th { overflow-wrap: normal; word-break: normal; white-space: nowrap; }
+
+/* Staff view (0.5.0): phone width first, one column of cards under three tabs. */
+.hr-staff { max-width: 32rem; margin-inline: auto; width: 100%; }
+.hr-staff-bar { display: flex; align-items: baseline; gap: 0.5rem; padding-bottom: 0.5rem; border-bottom: 1px solid var(--color-ink-700); }
+.hr-staff-app { font-weight: 600; color: var(--color-ink-100); }
+.hr-staff-ver { font-size: var(--text-micro); color: var(--color-ink-500); }
+.hr-staff-who { margin-left: auto; font-size: var(--text-label); color: var(--color-ink-400); text-align: right; overflow-wrap: anywhere; }
+.hr-staff-tabs { display: flex; gap: 0.375rem; }
+.hr-staff-tab { flex: 1 1 0; min-height: 2.25rem; border: 1px solid var(--color-ink-600); border-radius: 0.375rem; background: transparent; color: var(--color-ink-300); font: inherit; font-size: var(--text-label); cursor: pointer; }
+.hr-staff-tab[aria-selected="true"] { background: var(--color-accent); border-color: var(--color-accent); color: var(--color-ink-950); font-weight: 600; }
+.hr-staff-tab:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+.hr-staff-body, .hr-staff-stack { display: grid; gap: 0.75rem; min-width: 0; }
+.hr-staff-card { display: grid; gap: 0.375rem; padding: 0.75rem; min-width: 0; }
+.hr-staff-card h2 { font-size: var(--text-cardtitle, 0.9375rem); font-weight: 600; color: var(--color-ink-100); }
+.hr-staff-bal, .hr-staff-row { display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; padding: 0.4rem 0; border-top: 1px solid var(--color-ink-700); font-size: var(--text-table); min-width: 0; }
+.hr-staff-bal:first-of-type, .hr-staff-row:first-of-type { border-top: 0; }
+.hr-staff-n { font-size: 1.1rem; font-weight: 600; color: var(--color-ink-100); }
+.hr-staff-l { display: grid; gap: 0.125rem; min-width: 0; overflow-wrap: anywhere; }
+.hr-staff-r { display: flex; align-items: center; gap: 0.375rem; flex: none; }
+.hr-staff-note { border-left: 3px solid var(--color-ink-600); padding: 0.375rem 0.625rem; font-size: var(--text-label); color: var(--color-ink-300); background: var(--color-ink-850); border-radius: 0 0.375rem 0.375rem 0; }
+.hr-staff-note.ok { border-left-color: var(--color-ok); }
+.hr-staff-note.warn { border-left-color: var(--color-warn); }
+.hr-staff-note.fail { border-left-color: var(--color-fail); }
+.hr-staff-err { font-size: var(--text-label); color: var(--color-fail); }
+.hr-staff-clock { text-align: center; justify-items: center; padding-block: 1rem; }
+.hr-staff-time { font-size: 2.4rem; font-weight: 600; color: var(--color-ink-100); letter-spacing: 0.02em; }
+.hr-staff .hr-staff-punch { min-height: 3.5rem; font-size: 1rem; }
+.hr-staff .btn { min-height: 2.5rem; }
+.hr-staff .field { width: 100%; min-height: 2.375rem; }
+.hr-two { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; min-width: 0; }
+.hr-two > div { display: grid; gap: 0.25rem; min-width: 0; }
+.hr .chip[data-status="withdrawn"] { color: var(--color-ink-400); }
+.hr-staff .chip[data-status="rejected"] { color: var(--color-fail); }

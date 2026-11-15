@@ -1,0 +1,10 @@
+{
+  "version": 7,
+  "operations": [
+    {
+      "op": "add_column",
+      "table": "employees",
+      "column": {"name": "confirmed_member_id", "type": "text", "nullable": true, "max_length": 128, "json_schema": {"type": "string", "pattern": "^[A-Za-z0-9_-]{1,128}$"}}
+    }
+  ]
+}

@@ -193,8 +193,9 @@ export async function runProposal(scope: HostScope, runId: string, accounts: Pay
   return payrollProposal({ runRef: String(x.run_ref), period: String(x.period), entryDate: String(x.entry_date), runNo: int(x.run_no) ?? 0 }, sumTotals(lines), accounts);
 }
 /** The proposal for an approved claim, from a fresh read of the claim. */
-export async function claimProposalFor(scope: HostScope, claimId: string, accounts: ClaimAccounts, actions: HostActions = hostActions): Promise<Proposal> {
-  const claim = await actions.show(scope, claimId, "claims");
+export async function claimProposalFor(scope: HostScope, claimId: string, accounts: ClaimAccounts, actions: HostActions = hostActions, table: string = "claims"): Promise<Proposal> {
+  if (table !== "claims" && table !== "staff_claims") throw new FormError(null, NOT_APPROVED_TEXT);
+  const claim = await actions.show(scope, claimId, table);
   const x = p(claim);
   if (x.status !== "approved") throw new FormError(null, NOT_APPROVED_TEXT);
   return claimProposal({ id: claim.id, amountMinor: int(x.amount_minor) ?? 0, currency: str(x.currency) ?? "", category: str(x.category) ?? "other", merchant: str(x.merchant) ?? "", claimDate: str(x.claim_date) ?? "", decidedOn: str(x.decided_on) }, accounts);

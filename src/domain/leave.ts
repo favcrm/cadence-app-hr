@@ -304,9 +304,9 @@ export const BATCH_CHUNK_BYTES = 16384;
 export interface LedgerBatchItem { record_id: string; table: string; profile: LedgerEntry }
 const bytes = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).length;
 /** Split items into chunks of at most `maxItems` items and `maxBytes` bytes of serialized `{items}` arguments. One item over the limit alone is an error. */
-export function chunkBatch(items: readonly LedgerBatchItem[], maxItems = BATCH_MAX_ITEMS, maxBytes = BATCH_CHUNK_BYTES): LedgerBatchItem[][] {
-  const chunks: LedgerBatchItem[][] = [];
-  let current: LedgerBatchItem[] = [];
+export function chunkBatch<T extends object = LedgerBatchItem>(items: readonly T[], maxItems = BATCH_MAX_ITEMS, maxBytes = BATCH_CHUNK_BYTES): T[][] {
+  const chunks: T[][] = [];
+  let current: T[] = [];
   const base = bytes({ items: [] });
   let size = base;
   for (const item of items) {

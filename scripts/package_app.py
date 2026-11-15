@@ -128,7 +128,7 @@ STORAGE_DESCRIPTOR_KEYS = (
     "tables",
 )
 OPTIONAL_DESCRIPTOR_KEYS = ("record_write_schema", "record_search_columns", "tables")
-TABLE_OPTION_KEYS = ("search_columns", "write_schema", "append_only", "read_role")
+TABLE_OPTION_KEYS = ("search_columns", "write_schema", "append_only", "read_role", "row_owner")
 MIGRATION_KEYS = ("version", "path", "sha256")
 COLUMN_KEYS = ("name", "type", "nullable", "default", "max_length", "enum", "format", "json_schema")
 JSON_SCHEMA_TYPES = ("object", "array", "string", "number", "integer", "boolean", "null")
@@ -1543,6 +1543,32 @@ def _check_table_options(tables: object, default_table: str, model: dict, where:
             raise PackageError(f"{where}: tables.{name}.append_only is a boolean")
         if "read_role" in options and options["read_role"] != "owner":
             raise PackageError(f'{where}: tables.{name}.read_role can only be "owner"')
+        if "row_owner" in options:
+            _check_row_owner(options["row_owner"], model[name], where, name)
+
+
+def _check_row_owner(column_name: object, table: dict, where: str, name: str) -> None:
+    """`row_owner` (AOS-564): the text column naming the member who owns a row.
+
+    Mirrors `validateAppStorageModel`: a declared text column that is not nullable and has no
+    default, enum or format, a max_length of at least 200 when it has one (a member's id must
+    always fit), and every unique index on the table includes it.
+    """
+    column = table["columns"].get(column_name) if isinstance(column_name, str) else None
+    if column is None or column["type"] != "text":
+        raise PackageError(f"{where}: tables.{name}.row_owner must name a declared text column")
+    if column["nullable"] or any(key in column for key in ("default", "enum", "format")):
+        raise PackageError(
+            f"{where}: tables.{name}.row_owner must name a column that is not nullable and has "
+            "no default, enum or format"
+        )
+    if "max_length" in column and column["max_length"] < 200:
+        raise PackageError(f"{where}: tables.{name}.row_owner column needs a max_length of at least 200")
+    for index in table["indexes"].values():
+        if index["unique"] and column_name not in index["columns"]:
+            raise PackageError(
+                f"{where}: tables.{name}.row_owner needs every unique index to include its column"
+            )
 
 
 def check_pairing(manifest: Manifest, files: list[str], where: str) -> None:

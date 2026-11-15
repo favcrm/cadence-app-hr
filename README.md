@@ -1,17 +1,19 @@
 # Cadence HR app
 
 Public repository: https://github.com/favcrm/cadence-app-hr.
-App identity is `hr`. Release 0.4.0 adds monthly payroll with MPF and posting to the Accounting app (below); 0.3.0 added leave balances as a ledger. Release 0.2.0 holds seven tables behind five tabs. People is
+App identity is `hr`. Release 0.5.0 adds staff self-service and clock-in (打卡, below). Release 0.4.0 adds monthly payroll with MPF and posting to the Accounting app (below); 0.3.0 added leave balances as a ledger. Release 0.2.0 holds seven tables behind five tabs. People is
 the employee directory from 0.1.0. Policies, Leave, Claims and Recruiting are new:
 company policies, leave requests and leave types, expense claims, job openings
 and candidates. Leave and Claims show a pending queue with approve and reject as
 owner actions. Five skills (`app/skills/`) tell the hosted chat agent how to
 answer a policy question, stage a leave request or a claim, draft a job
 description and write a screening note. The agent stages writes; the owner
-approves them. Every table is readable by the workspace owner only.
+approves them. Every table is readable by the workspace owner only; from 0.5.0 the staff tables also let a
+member read and file their own rows there, and nothing else.
 
 The app stores names, employee numbers, contact details, leave and claim records,
-policy text and candidates' CV text, and from 0.4.0 monthly salaries, payroll runs and MPF rate rows. It holds no
+policy text and candidates' CV text, from 0.4.0 monthly salaries, payroll runs and MPF rate rows, and from 0.5.0
+clock-in and clock-out times (no location) and the member account linked to an employee. It holds no
 identity document number (HKID), bank account number or medical information.
 
 ## 0.2.1: starter leave types
@@ -214,6 +216,113 @@ read, explain and copy them.
   the owner's approval of that card is then the only check. Approve an `hr-payroll-` posting only when it was
   staged by `hr-posting`.
 
+## 0.5.0: staff self-service and clock-in (打卡)
+
+A member of the workspace who is linked to an employee record opens HR and sees only **My leave**, **My claims** and
+**Clock**, phone width first, over their own rows. They never see People, salaries, payroll, other people's rows or the
+owner tabs. The owner's tabs are unchanged; staff work arrives in new sub-tabs. The confirmed design is the HR-5
+preview (three tabs, balance from the ledger, time-only clock, withdraw a pending request).
+
+- **Host contract (AOS-564, `row_owner`).** A table may name a text column (`member_id` here) whose value is the member
+  who owns a row. A member who is not an owner can create rows there and read only rows carrying their own id; the
+  host stamps that id from the board session (never from the call), names the record (`mem_` plus 32 hex), refuses a
+  `record_id` (400) or another member's id (403), and never lets a member update (403). Another member's row reads as
+  missing. Agents, the CLI and staged writes get no member id, so they read these tables as owner-only; the owner's
+  own session (screen or chat) reads every row. The column must be non-null text with no default, enum or format and
+  a `max_length` of at least 200, and every unique index must include it. A member may hold 5,000 rows per table.
+- **New tables, not `row_owner` on the old ones.** `leave_requests` and `claims` hold rows on live boards and have no
+  column that qualifies, and a non-null column added later needs a default, which the owner column may not have (a
+  backfill of it on a populated table is refused). So 006 adds `staff_leave_requests` and `staff_claims` with the same
+  columns and the same write rules (filed `pending`/`submitted` with no decision; frozen once decided), plus
+  `member_id` and `client_ref`. 001-004 are byte-identical.
+- **Migrations.** `007-link-confirmation.json` adds the nullable `employees.confirmed_member_id` (the owner's
+  confirmation of a link). `005-attendance.json`: `attendance_punches` (`employee_id`, `member_id`, `at` epoch seconds,
+  `direction` in/out, `method` app/import/correction, nullable `lat_e7`, `lng_e7`, `accuracy_m`, `note`, and
+  `client_ref`), append-only, unique (`member_id`, `client_ref`). `006-self-service.json`: `staff_link_requests`,
+  `staff_snapshots` and `leave_withdrawals` (append-only), `staff_leave_requests` and `staff_claims`. All six are
+  `read_role: owner` with `row_owner: member_id` and an ordinary index on `member_id`.
+- **Owner or member.** The board pushes no role, and it closes the frame on a 401 and on a 403 (except a 403
+  `owner_required` on a write, which it keeps non-fatal and hands the frame as code `owner_required`). It collapses
+  every other refusal (400, 413, 429, 5xx, an edge page, a fetch failure) to `failed`, which the frame sees as status
+  400. So the screen asks before its first read with one `records.update` of record `viewer-probe` in
+  `leave_withdrawals` (`expected_revision` 1, an empty profile): the owner meets the table's append-only rule (409,
+  before any row is read); a member never updates and is refused `owner_required` before any read. Only those two
+  answers are a role; anything else shows "could not tell" with a retry, and neither view is shown. A board that does
+  not offer `records.update` keeps the 0.4.0 owner screen. On a board older than Cadence CAD-2315 (which made the
+  member's write 403 non-fatal), a member's probe closes their frame: no data is shown. Every call the staff view sends
+  goes to one of the six tables (`MEMBER_TABLES`, guarded in `staff.ts` and asserted by the tests).
+- **Linking (owner-managed).** The staff view offers an unlinked member only a link request (the name they give, an
+  optional employee number); their screen shows a code from their account id, and People → Staff accounts shows the
+  same code. That is a screen choice, not a host rule: a member can craft rows in any of the six tables, and the
+  owner's checks (the linked-account match at approval, the flags in the staff lists and on punches) are the control.
+  Linking writes the account id to the employee record's `member_id` and `confirmed_member_id` in one update (both on
+  the owner-only record; `confirmed_member_id` is migration `007-link-confirmation.json`), then a `staff_snapshots`
+  row. A link counts only when `confirmed_member_id` equals `member_id`; no member-writable table is read to decide
+  it, so a member cannot forge one. A `member_id` set before 0.5.0 (or by an edit outside Staff accounts) has no
+  confirmation and is listed as "Needs confirmation": it is not a link, nothing is published to it, imports and
+  corrections are not stamped with it, and its rows are not approved, until the owner checks the code and confirms.
+  One account per employee, one employee per account. Unlink clears both columns and publishes "not linked".
+- **Owner screens never scan a member-writable table.** A member can file 5,000 rows in each staff table. Staff
+  accounts lists accounts from the host's aggregate grouped by `member_id` (one row per account, at most 100 shown,
+  with a note when there are more) and reads each account's newest request with a filter on that account. Import
+  look-ups filter on the line's account and its references. Snapshots are read only by their own member. The staff
+  lists page through the host's own paging. The Attendance list reads punches up to now plus five minutes (newest
+  100, with an employee filter); punches dated later are shown apart, flagged "Dated in the future", and not counted. A flooding account fills only its own views and one row of Staff
+  accounts; tested with 5,000 rows in each table.
+- **What a linked account can read.** Its own rows in the six tables, including the owner's decision notes, correction
+  notes on its punches, imported punches and every snapshot published to it, with a crafted read as well as in the
+  staff view. After unlinking it keeps reading what was already published to it. The note fields and Staff accounts
+  say so.
+- **Balances.** Members cannot read `leave_entries`, and it cannot gain `row_owner` (append-only, populated). The
+  owner's screen publishes each linked member's balances as a new snapshot row from the same `records.aggregate` the
+  Balances tab reads: on linking, after deciding that member's leave request, and on "Update staff balances" (use it
+  after an accrual run). The newest is the host's newest row (`order_by: created_at`), not the owner device's `as_of`
+  clock; two published in the same second may tie. The staff view shows it "as of" its time, in days; an empty ledger
+  shows "no leave recorded", a failed read shows no figure. The staff view trusts only snapshots under a `snap-` id,
+  which a member cannot write.
+- **Untrusted columns.** A member chooses every column except `member_id`. Approving a staff request or claim first
+  checks that its `member_id` is the account linked on that employee's record; otherwise it is refused. The staff lists
+  name the employee from the employee record by `employee_id` (the member typed `employee_name`) and flag a row not
+  filed from that employee's linked account. A punch's source is read from its record id (`imp-` import, `cor-`
+  correction, anything else a member's own punch), not from its `method`; the Attendance list flags a staff punch not
+  filed by that employee's linked account. A withdrawal counts only when the host matches both its `request_id` and
+  the request's `member_id`.
+- **Decisions and withdrawal.** Staff requests and claims are decided on Leave → Staff requests and Claims → Staff
+  claims (no New, no Edit). A leave approval writes its `taken` entry first, exactly as for an owner request, and
+  "Record earlier approvals" reads both tables. A member withdraws a pending request by filing a `leave_withdrawals`
+  row (unique per request); the owner cannot approve it, and Reject closes it as `cancelled`. Approved staff claims can
+  be posted to Accounting like any claim (`hr-claim-<id>`; `hr-posting` reads `staff_claims` when `claims` has no such
+  record).
+- **Clock (打卡).** Time only: the app frame is `sandbox="allow-scripts"` with an opaque origin, so the browser refuses
+  geolocation and no host bridge exists (CAD-2334). Times are Hong Kong time (UTC+8). The button is Clock in, or Clock
+  out after an `in` today; Today and This week show first in and last out, a missing clock-out and approved leave
+  days. Punches are never edited; the owner adds a correction (a new row with a note).
+- **Import from a device (owner).** Attendance → Import from a device takes the CSV (`employee number, YYYY-MM-DD
+  HH:MM[:SS], in|out`, a header line skipped), previews every line (new, already imported, unknown employee, not
+  readable, repeated), then imports the new lines in batches (at most 200 items and 16,384 bytes, about 50 punches) under ids derived from the line (`imp-` plus a
+  64-bit FNV-1a of employee number, time and direction), so a second run adds nothing and a lost reply is read back.
+  An employee with no confirmed link gets `member_id` `-`. A member can predict an import id and file a punch under it
+  as `client_ref`, which refuses that batch; the import then sends the chunk one line at a time and lists each line it
+  still could not store, so the owner adds a correction for it.
+- **Retries.** Every member form holds a `client_ref` chosen once. After any failure other than its own form check the
+  screen reads the member's own rows for it: found is saved; a read-back that answers without it is "not saved"; a
+  read-back that fails is "may not be saved". The staff lists follow the cursor for a few pages and say when older
+  entries are not shown.
+- **Skills.** `attendance-review` summarises missing punches and late arrivals (against a start time the owner gives)
+  and never writes. `leave-desk` and `claim-intake` read the staff tables too and never stage into them.
+- **Snapshot growth.** Every publish is a new snapshot row: one per member on each link, decision and "Update staff
+  balances". The table counts toward the 100,000-row cap like any other (AOS-593 tracks a host way to prune it).
+- **Known limits.** No yearly archive: the host has no delete or archive verb, so punches stay (100,000 rows per table,
+  about two years at 50 staff and four punches a day; 5,000 rows per member per table). Owner-entered leave requests
+  and claims stay owner-only, so a member's lists show what they filed from their own view. A member's `at` is their
+  device's clock; the host's own create time is in the row's history. Receipt upload and location wait for host
+  capabilities. A member id longer than 128 characters or outside `[A-Za-z0-9_-]` cannot be stored on the employee
+  record, and linking says so. Owner-imported punches for a linked member count toward that member's 5,000-row
+  limit; at the limit their clock-in answers "This was not saved". Updating an install from 0.4.0 is not a routine
+  update: new table options are a record-contract change (`storage_record_contract_changed`), so the owner approves
+  the version, as for 0.4.0. A linked account can read the owner's notes on its own rows and keeps reading what was
+  published to it after unlinking.
+
 ## Local development
 
 Use the Node version in `screen-ui.lock.json` and the pnpm version in
@@ -249,17 +358,20 @@ hosted-only storage refusal.
 
 - `app/` is the installable package: `app.md`, `app-storage.json` with
   `storage/001-initial.json`, `storage/002-hr-records.json`, `storage/003-leave-ledger.json` and
-  `storage/004-payroll.json` pinned by sha256, `app-chat.json`, `skills/<tag>/` (seven skill packages) and the generated screen
+  `storage/004-payroll.json`, `storage/005-attendance.json` and `storage/006-self-service.json` pinned by sha256,
+  `app-chat.json`, `skills/<tag>/` (eight skill packages) and the generated screen
   under `screens/hr/`.
 - `src/bridge/` is the one adapter over the pinned app-kit bridge (`createScreenBridge`): the scope, the
   operations and their budgets, and the leave hint.
 - `src/domain/` is pure logic: `people.ts` (employees), `records.ts` (the four new tabs: field
   specs, form to profile, exact lookups, decisions, refusal classes), `leave.ts` (the accrual rule, monthly accrual,
   ledger entries, batch chunking), `mpf.ts` (MPF contributions), `mpf-rates.ts` (the first rate row),
-  `payroll.ts` (a month's run) and `posting.ts` (the Accounting batch).
+  `payroll.ts` (a month's run), `posting.ts` (the Accounting batch) and `staff.ts` (0.5.0: Hong Kong time, the
+  member's own rows, punches and the device CSV).
 - `src/features/hr/` holds the screen: People, and one generic record pane (`RecordsPane.tsx`) driven by
   `views.tsx` for the other tabs; `ledger.ts` holds the ledger's host calls and `BalancesPane.tsx` the Balances list; `payroll.ts` holds payroll's host
-  calls and `PayrollPanes.tsx` the Payroll tab.
+  calls and `PayrollPanes.tsx` the Payroll tab; `staff.ts` holds the staff self-service host calls, `StaffScreen.tsx`
+  the member view, `StaffAccounts.tsx` People → Staff accounts and `AttendancePane.tsx` the Attendance tab.
 - `tests/unit/`, `tests/contract/` and `tests/eval/` hold the tests; `tests/eval/` is the evaluation set.
 - `scripts/host-schema-check.mjs` and `scripts/host-skills-check.mjs` run the package through the host's own
   schema and skill-reader code (see Verification).

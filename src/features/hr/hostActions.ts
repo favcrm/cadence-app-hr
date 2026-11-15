@@ -76,6 +76,14 @@ export function createHostActions(call: CallFn) {
       if (!RECORD_ID.test(recordId)) throw new ApiError("The record id is invalid", 400);
       return parseRecord(await send(scope, "records.create", { record_id: recordId, profile, ...(table ? { table } : {}) }));
     },
+    /**
+     * A member's own row in a `row_owner` table: no `record_id` (the host names it) and no owner column (the host
+     * stamps the member's id from the board session). Sending either is refused, and a 403 closes the frame.
+     */
+    async file(scope: HostScope, profile: Record<string, unknown>, table: string): Promise<HostRecord> {
+      if ("member_id" in profile) throw new ApiError("A member's row never names its owner", 400);
+      return parseRecord(await send(scope, "records.create", { profile, table }));
+    },
     async update(scope: HostScope, recordId: string, expectedRevision: number, profile: unknown, table?: string): Promise<HostRecord> {
       if (!RECORD_ID.test(recordId) || !Number.isInteger(expectedRevision) || expectedRevision < 1) throw new ApiError("The record id or revision is invalid", 400);
       return parseRecord(await send(scope, "records.update", { record_id: recordId, expected_revision: expectedRevision, profile, ...(table ? { table } : {}) }));

@@ -24,7 +24,7 @@ export function seedRows(): SeedRow[] {
         display_name: name, employee_no: `E-${n}`, email: i % 5 === 4 ? null : `person${n}@example.invalid`, phone: i % 3 === 0 ? `+852 5550 ${String(1000 + i)}` : null,
         job_title: title, department, employment_type: title === "Intern" ? "intern" : title.startsWith("Part-time") ? "part_time" : title.startsWith("Contract") ? "contract" : TYPES[i % TYPES.length]!,
         join_date: `20${String(18 + (i % 8)).padStart(2, "0")}-${String(1 + (i % 12)).padStart(2, "0")}-${String(1 + (i % 27)).padStart(2, "0")}`,
-        leave_date: left ? "2026-09-30" : null, manager_id: i % 4 === 0 ? null : "emp-seed001", status: left ? "left" : i % 11 === 10 ? "on_leave" : "active", member_id: null,
+        leave_date: left ? "2026-09-30" : null, manager_id: i % 4 === 0 ? null : "emp-seed001", status: left ? "left" : i % 11 === 10 ? "on_leave" : "active", member_id: i === 0 ? "usr_preview-amy-0001" : null, confirmed_member_id: i === 0 ? "usr_preview-amy-0001" : null,
       },
     };
   });
@@ -68,5 +68,28 @@ export function seedTables(): Record<string, SeedRow[]> {
       row("cand-001", { opening_id: "job-001", display_name: "Robin Sample", email: "robin@example.invalid", phone: null, source: "Referral", stage: "new", cv_text: "Sample CV text, invented.", screening: { summary: "Evidences 1 of 2 requirements.", reasons: ["Requirement: bookkeeping. CV: 'bookkeeping experience' (evidenced).", "Requirement: payroll. Not mentioned (ask at interview)."] } }),
       row("cand-002", { opening_id: "job-001", display_name: "Sasha Sample", email: null, phone: null, source: "", stage: "interview", cv_text: "", screening: null }),
     ],
+  };
+}
+
+// Synthetic staff self-service rows (0.5.0): the member linked to E-001 has a published snapshot, two requests, a claim
+// and this week's punches. Times are relative to `now` so the Clock tab always has something to show.
+export function seedStaff(member: string, now: number): Record<string, SeedRow[]> {
+  const row = (id: string, profile: Record<string, string | number | boolean | null | object>): SeedRow => ({ id, revision: 1, profile: profile as SeedRow["profile"] });
+  const day = 86400, hk = 8 * 3600, today = Math.floor((now + hk) / day) * day - hk;
+  const who = { employee_id: "emp-seed001", employee_name: "Avery Sample", member_id: member };
+  return {
+    staff_snapshots: [row("snap-seed001", { member_id: member, employee_id: "emp-seed001", employee_name: "Avery Sample", employee_no: "E-001", as_of: now - 3600,
+      leave: { v: 1, types: [{ code: "ANNUAL", name: "Annual leave" }, { code: "UNPAID", name: "Unpaid leave" }], balances: [{ leave_type: "ANNUAL", half_days: 12 }], truncated: false } })],
+    staff_link_requests: [row("mem_seed0001", { member_id: member, display_name: "Avery Sample", employee_no: "E-001", requested_at: now - 30 * day })],
+    staff_leave_requests: [
+      row("mem_seed0002", { ...who, leave_type: "ANNUAL", start_date: "2026-12-22", end_date: "2026-12-23", half_days: 3, reason: "", status: "pending", decided_on: null, decision_note: null, client_ref: "slv-seed1" }),
+      row("mem_seed0003", { ...who, leave_type: "ANNUAL", start_date: "2026-10-02", end_date: "2026-10-03", half_days: 4, reason: "", status: "rejected", decided_on: "2026-09-20", decision_note: null, client_ref: "slv-seed2" }),
+    ],
+    staff_claims: [row("mem_seed0004", { ...who, claim_date: "2026-11-03", category: "meals", merchant: "Harbour Cafe (sample)", amount_minor: 42000, currency: "HKD", description: "", receipt_ref: null, status: "approved", decided_on: "2026-11-05", decision_note: null, client_ref: "scl-seed1" })],
+    attendance_punches: [
+      row("mem_seed0005", { employee_id: "emp-seed001", member_id: member, at: today - day + 9 * 3600 + 300, direction: "in", method: "app", lat_e7: null, lng_e7: null, accuracy_m: null, note: null, client_ref: "app-seed1" }),
+      row("mem_seed0006", { employee_id: "emp-seed001", member_id: member, at: today - day + 18 * 3600 + 720, direction: "out", method: "app", lat_e7: null, lng_e7: null, accuracy_m: null, note: null, client_ref: "app-seed2" }),
+    ],
+    leave_withdrawals: [],
   };
 }
