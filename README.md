@@ -61,10 +61,18 @@ type. Approving a request deducts leave, an accrual run adds it, and a correctio
   Who accrues: a real join date is required (none: skipped); a month before the join month is skipped; someone who joins
   or leaves mid-month accrues for that whole month; a real leave date before the month starts, or status `left` with
   no leave date, is skipped (`left`). Each skip is shown with its reason.
-- **`source_ref` formats.** `taken-<request id>`, `accrual-<employee id>-<leave type>-<YYYY-MM>`,
+- **`source_ref` formats.** `taken-<request id>` (an approval), `reversal-taken-<request id>` (a rejection that
+  cancels an earlier approval's entry), `accrual-<employee id>-<leave type>-<YYYY-MM>` (a month's accrual) and
   `adjustment-<form id>` (one random id per open form, so a retry after a lost reply meets its own entry). The
   column allows 200 characters, the longest accrual ref is 177. Record ids are random (`le-` plus 12 hex): the
-  idempotence is the unique `source_ref`, not the record id.
+  idempotence is the unique `source_ref`, not the record id. The column's pattern (`[A-Za-z0-9_-]`) leaves no
+  separator that a record id or a leave type code cannot also contain, so an accrual ref is ambiguous in theory:
+  employee `a-B` with type `C` and employee `a` with type `B-C` give the same ref for a month. The screen's own record
+  ids are `<prefix>-` plus lowercase hex and codes are capitals, so its own rows cannot collide; a row written
+  elsewhere with such ids could. Making the ref unambiguous needs another format, so 0.3.0 keeps these; where an
+  entry is re-read after a refused write (approve, reject, a refused batch chunk) a different entry under the same ref
+  stops the write instead of counting as recorded, but Run accrual's review counts a ref that is present as already
+  recorded.
 - **Approve.** The owner's Approve re-reads the request (it must still be pending and at the revision shown), creates
   its `taken` entry (minus its half-days, dated its first day; a request across a month boundary is one entry in the
   month it starts), and only then sets the request approved. A conflict, a store refusal (the deployed host answers a

@@ -461,13 +461,22 @@ test("a truncated aggregate is reported, and a malformed one is an invalid recei
   await expect(G.readBalances(scope, [], noSum as never)).rejects.toMatchObject({ status: 502 });
 });
 
-test("the screen never updates a ledger entry anywhere in its source", async () => {
-  const { readdirSync, readFileSync } = await import("node:fs");
-  const dir = new URL("../../src/features/hr/", import.meta.url);
-  for (const file of readdirSync(dir).filter((f) => /\.tsx?$/.test(f))) {
-    const source = readFileSync(new URL(file, dir), "utf8");
-    if (/LEDGER|leave_entries/.test(source)) expect([file, /actions\.update\([^)]*(LEDGER|leave_entries)/.test(source)]).toEqual([file, false]);
-  }
+test("no ledger flow ever updates an entry: approve, reject with a reversal, accrual, earlier approvals, adjustments", async () => {
+  const host = company(3);
+  host.add("employees", "emp-aaa", employee("aaa", { employee_no: "E-001" }));
+  host.add("leave_requests", "lv-1", request());
+  host.add("leave_requests", "lv-2", request({ start_date: "2026-03-09", end_date: "2026-03-10" }));
+  host.add("leave_requests", "lv-old", request({ status: "approved", decided_on: "2026-01-20" }));
+  await approve(host);
+  host.fault("records.update", new ApiError("lost", 504), { table: "leave_requests" });
+  await expect(approve(host, stored(host, "lv-2"))).rejects.toMatchObject({ status: 504 });
+  await reject(host, stored(host, "lv-2"));
+  await G.runAccrual(scope, await G.planMonth(scope, "2026-03", host.actions), undefined, host.actions);
+  await G.postEntries(scope, (await G.planReconcile(scope, host.actions)).entries, undefined, host.actions);
+  await G.adjustBalance(scope, { employeeNo: "E-001", leaveType: "ANNUAL", days: "1", effectiveDate: "2026-03-05", note: "Opening" }, G.adjustmentRef("adj-1"), host.actions);
+  expect(new Set(entries(host).map((e) => e.kind))).toEqual(new Set(["taken", "adjustment", "accrual"]));
+  expect(host.calls.filter((c) => c.verb === "records.create" || c.verb === "records.batch").length).toBeGreaterThan(0);
+  noUpdateOfEntries(host);
 });
 
 // ---- the screen, the skill and the agent agree --------------------------------------------------------------------

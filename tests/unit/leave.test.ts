@@ -185,6 +185,16 @@ test("batches are chunked within 200 items and the byte limit, in order, with no
   expect(L.chunkBatch([])).toEqual([]);
 });
 
+test("removing a step keeps the first remaining step at 0 years, so the rule stays valid", () => {
+  expect(L.removeTier("0:7;3:8;5:10", 0)).toBe("0:8;5:10");
+  expect(L.textToTiers(L.removeTier("0:7;3:8;5:10", 0))).toEqual([{ fromYears: 0, halfDays: 16 }, { fromYears: 5, halfDays: 20 }]);
+  expect(L.removeTier("0:7;3:8;5:10", 1)).toBe("0:7;5:10");
+  expect(L.removeTier("0:7;3:8", 1)).toBe("0:7");
+  expect(L.removeTier("0:7", 0)).toBe("");
+  // A step still being typed keeps its days as typed.
+  expect(L.removeTier("0:7;3:", 0)).toBe("0:");
+});
+
 test("the reversal of a stored taken entry gives its half-days back under a ref derived from the request", () => {
   const stored = { employee_id: "emp-aaa", leave_type: "ANNUAL", half_days: -4, kind: "taken", effective_date: "2026-03-02", source_ref: "taken-lv-1", note: null };
   const built = L.reversalEntry("lv-1", stored);

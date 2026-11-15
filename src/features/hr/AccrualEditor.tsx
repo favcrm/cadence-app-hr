@@ -1,5 +1,5 @@
 import { Button, Notice } from "@cadence/screen-ui";
-import { RULE_KEPT, parseAccrualRule } from "../../domain/leave";
+import { RULE_KEPT, parseAccrualRule, removeTier } from "../../domain/leave";
 import { useLocale } from "./locale";
 
 interface Row { years: string; days: string }
@@ -32,7 +32,7 @@ export default function AccrualEditor({ id, value, onChange }: { id: string; val
           <span className="text-label text-ink-400">{t("years of service:")}</span>
           <input className="field" type="text" inputMode="decimal" maxLength={7} value={row.days} aria-label={step("Days a year, step {n}", i + 1)} onChange={(e) => set(i, { days: e.target.value })} />
           <span className="text-label text-ink-400">{t("days a year")}</span>
-          <Button size="sm" variant="ghost" onClick={() => onChange(toText(rows.filter((_, j) => j !== i)))}>{t("Remove")}</Button>
+          <Button size="sm" variant="ghost" onClick={() => onChange(removeTier(value, i))}>{t("Remove")}</Button>
         </div>
       ))}
       <div className="hr-actions">

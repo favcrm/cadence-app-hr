@@ -4,8 +4,7 @@
 // Column names, patterns and bounds mirror app/storage/003-leave-ledger.json; tests keep them in step.
 import { realDate } from "./people";
 
-export const LEDGER_KINDS = ["accrual", "taken", "adjustment", "carry_forward", "expiry"] as const;
-export type LedgerKind = (typeof LEDGER_KINDS)[number];
+export type LedgerKind = "accrual" | "taken" | "adjustment" | "carry_forward" | "expiry";
 export const SOURCE_REF = /^[A-Za-z0-9_-]{1,200}$/;
 const EMPLOYEE_ID = /^[A-Za-z0-9_-]{1,128}$/;
 const LEAVE_CODE = /^[A-Z0-9_-]{1,32}$/;
@@ -50,8 +49,6 @@ export function monthEnd(month: string): string {
   const { year, month: m } = parseMonth(month)!;
   return `${month}-${pad(new Date(Date.UTC(year, m, 0)).getUTCDate())}`;
 }
-/** The month of a `YYYY-MM-DD` date, or null. */
-export const monthOf = (date: string): string | null => (realDate(date) ? date.slice(0, 7) : null);
 /** Whole years of service completed on `onDate` (both real dates); null when either is not a date or `onDate` is earlier. */
 export function completedYears(join: string, onDate: string): number | null {
   if (!realDate(join) || !realDate(onDate) || onDate < join) return null;
@@ -65,7 +62,7 @@ export function completedYears(join: string, onDate: string): number | null {
 // ascend. Rules are the customer's own data: no figure is shipped with the app and nothing here is legal advice.
 export interface RuleTier { fromYears: number; halfDays: number }
 export type RuleResult = { ok: true; tiers: RuleTier[] } | { ok: false; reason: string };
-export const RULE_UNREADABLE = "The accrual rule is not in the supported format.";
+const RULE_UNREADABLE = "The accrual rule is not in the supported format.";
 
 export function parseAccrualRule(value: unknown): RuleResult {
   const bad: RuleResult = { ok: false, reason: RULE_UNREADABLE };
@@ -159,6 +156,17 @@ export const accrualRef = (employeeId: string, leaveType: string, month: string)
 export const takenRef = (requestId: string): string => `taken-${requestId}`;
 /** The ref of the entry that cancels a request's `taken` entry when the request is rejected after it was written. */
 export const reversalRef = (requestId: string): string => `reversal-${takenRef(requestId)}`;
+
+/**
+ * The rule text with one step removed. The first remaining step always starts at 0 completed years: the editor does not
+ * let the owner change the first step's years, so removing the first step must not leave a later step's years there.
+ */
+export function removeTier(text: string, index: number): string {
+  const rows = text === "" ? [] : text.split(";");
+  const left = rows.filter((_, i) => i !== index);
+  if (left.length > 0) left[0] = `0:${left[0]!.split(":")[1] ?? ""}`;
+  return left.join(";");
+}
 
 /** The half-days a (readable) rule gives an eligible employee for the month: tier by years completed at the month's end. */
 export function accrualHalfDays(tiers: readonly RuleTier[], joinDate: string, month: string): number {
