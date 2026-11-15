@@ -209,6 +209,10 @@ read, explain and copy them.
   `payroll-prep` says a run whose lines do not match its count has no figures to give; the host's table `lock` option (lines locked by
   `run_ref` once the run is approved) is the proper fix, not adopted in 0.4.0 because checker and board support for it
   is unverified.
+  One payroll a month is enforced by the screen and the `hr-posting` skill, not by the host or by Accounting: a
+  `records.batch` staged in chat without `hr-posting` can still carry a superseded or second run of the month, and
+  the owner's approval of that card is then the only check. Approve an `hr-payroll-` posting only when it was
+  staged by `hr-posting`.
 
 ## Local development
 
