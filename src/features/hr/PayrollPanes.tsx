@@ -2,7 +2,7 @@ import { Button, DataTable, EmptyState, ErrorNotice, Field, Loading, Notice, Sel
 import { useMemo, useState, type ReactNode } from "react";
 import { useUnsavedEdits } from "../../bridge/leave";
 import { FIRST_MPF_RATE } from "../../domain/mpf-rates";
-import { isPeriod, SKIP_TEXT, type Adjustment, type PayrollLine, type RunPlan, unsavable } from "../../domain/payroll";
+import { isPeriod, postedEarlier, SKIP_TEXT, supersededBy, type Adjustment, type PayrollLine, type RunPlan, unsavable } from "../../domain/payroll";
 import { ACCOUNT_CODE, DEFAULT_PAYROLL_ACCOUNTS, defaultClaimAccounts, type AccountingBatch, type ClaimAccounts, type PayrollAccounts, type Proposal } from "../../domain/posting";
 import { FormError, fromMinor, newRecordId, realDate, todayLocal, toMinor } from "../../domain/records";
 import type { HostRecord, HostScope } from "./hostActions";
@@ -11,7 +11,7 @@ import { listAll } from "./ledger";
 import { useLocale } from "./locale";
 import {
   addFirstRate, addSalary, claimProposalFor, computeRun, decideRun, preparePosting, readPostings, readRates, readRunInputs, readRuns, readSalaries, runLines,
-  runProposal, saveRun, toRate, toSalary, RUNS, type RunInputs,
+  runProposal, saveRun, toRate, toRunFact, toSalary, RUNS, type RunInputs,
 } from "./payroll";
 import { problemFor } from "./recordsSubmit";
 import { useHrLoader } from "./resources";
@@ -366,7 +366,11 @@ export function RunsPane({ scope, canWrite, canBatch }: { scope: HostScope; canW
 }
 
 // ---- postings -------------------------------------------------------------------------------------------------------
-interface Postable { source: "payroll" | "claim"; id: string; ref: string; label: string; category: string; posting: HostRecord | null }
+interface Postable {
+  source: "payroll" | "claim"; id: string; ref: string; label: string; category: string; posting: HostRecord | null;
+  /** For a run: its month and number, the later approved run that supersedes it, and earlier runs HR records as posted. */
+  period: string; runNo: number; supersededBy: string | null; postedEarlier: string[];
+}
 
 function BatchView({ batch }: { batch: AccountingBatch | Proposal }) {
   const { t } = useLocale();
@@ -395,6 +399,9 @@ function PrepareForm({ scope, item, onDone, onCancel }: { scope: HostScope; item
   const [codes, setCodes] = useState<Record<string, string>>(() => ({ ...(item.source === "payroll" ? DEFAULT_PAYROLL_ACCOUNTS : defaultClaimAccounts(item.category)) }));
   const [proposal, setProposal] = useState<Proposal | null>(null);
   const [phase, setPhase] = useState<{ s: "idle" | "busy" } | { s: "error"; message: string }>({ s: "idle" });
+  // The screen cannot read Accounting: the owner confirms an earlier posted run of the month is reversed there, and
+  // the hr-posting skill checks the journal before it stages anything.
+  const [reversedConfirmed, setReversedConfirmed] = useState(false);
   const labels: Record<string, string> = item.source === "payroll"
     ? { salaries: "Salaries expense account", mpfExpense: "MPF expense account", netPay: "Net pay paid from (bank account)", mpfPayable: "MPF payable account" }
     : { expense: "Expense account", payable: "Owed to the employee (liability account)" };
@@ -403,7 +410,7 @@ function PrepareForm({ scope, item, onDone, onCancel }: { scope: HostScope; item
   const preview = () => {
     setPhase({ s: "busy" }); setProposal(null);
     const trimmed = Object.fromEntries(Object.entries(codes).map(([k, v]) => [k, v.trim()]));
-    const next = item.source === "payroll" ? runProposal(scope, item.id, trimmed as unknown as PayrollAccounts) : claimProposalFor(scope, item.id, trimmed as unknown as ClaimAccounts);
+    const next = item.source === "payroll" ? runProposal(scope, item.id, trimmed as unknown as PayrollAccounts, undefined, new Set(reversedConfirmed ? item.postedEarlier : [])) : claimProposalFor(scope, item.id, trimmed as unknown as ClaimAccounts);
     void next.then((p) => { setProposal(p); setPhase({ s: "idle" }); }, (e: unknown) => fail(e instanceof Error && e.name === "PostingError" ? new FormError(null, e.message) : e));
   };
   const save = () => {
@@ -421,6 +428,12 @@ function PrepareForm({ scope, item, onDone, onCancel }: { scope: HostScope; item
             {(c) => <input {...c} className="field" maxLength={12} autoComplete="off" value={codes[key] ?? ""} onChange={(e) => { setCodes((prev) => ({ ...prev, [key]: e.target.value.toUpperCase() })); setProposal(null); }} />}
           </Field>
         ))}
+        {item.postedEarlier.length > 0 && (
+          <div className="grid gap-1">
+            <p className="text-label">{t("HR records an earlier run of this month as posted: {refs}. Only one payroll a month belongs in the books. Reverse it in the Accounting app's Journal before this run is posted.").replace("{refs}", item.postedEarlier.join(", "))}</p>
+            <label className="text-label hr-actions"><input type="checkbox" checked={reversedConfirmed} onChange={(e) => { setReversedConfirmed(e.target.checked); setProposal(null); }} /> {t("I have reversed it in the Accounting app's Journal. The assistant checks the journal before it posts this run.")}</label>
+          </div>
+        )}
         <div className="hr-actions"><Button size="sm" loading={phase.s === "busy" && !proposal} disabled={bad || phase.s === "busy"} onClick={preview}>{t("Show the entry")}</Button></div>
       </Section>
       {phase.s === "error" && <ErrorNotice bare>{phase.message}</ErrorNotice>}
@@ -440,12 +453,13 @@ function PrepareForm({ scope, item, onDone, onCancel }: { scope: HostScope; item
 function PostingState({ item }: { item: Postable }) {
   const { t } = useLocale();
   const x = item.posting ? prof(item.posting) : null;
-  if (x === null) return <span className="text-ink-400">{t("Not prepared")}</span>;
+  const superseded = item.supersededBy !== null && <> {t("Superseded by {ref}: only the latest approved run of a month is posted.").replace("{ref}", item.supersededBy)}</>;
+  if (x === null) return item.supersededBy !== null ? <span className="text-ink-400">{superseded}</span> : <span className="text-ink-400">{t("Not prepared")}</span>;
   if (x.stage === "posted") {
     const mismatch = x.posting_ref !== x.entry_ref;
-    return <span>{t("HR has a record that this was posted as {ref} on {date}.").replace("{ref}", s(x.posting_ref)).replace("{date}", s(x.posted_on))}{mismatch && <> {t("That reference is not this entry's; check the Accounting journal.")}</>}</span>;
+    return <span>{t("HR has a record that this was posted as {ref} on {date}.").replace("{ref}", s(x.posting_ref)).replace("{date}", s(x.posted_on))}{mismatch && <> {t("That reference is not this entry's; check the Accounting journal.")}</>}{superseded}</span>;
   }
-  return <span>{t("Prepared as {ref}; not yet recorded as posted.").replace("{ref}", s(x.entry_ref))}</span>;
+  return <span>{t("Prepared as {ref}; not yet recorded as posted.").replace("{ref}", s(x.entry_ref))}{superseded}</span>;
 }
 
 export function PostingsPane({ scope, canWrite }: { scope: HostScope; canWrite: boolean }) {
@@ -457,11 +471,20 @@ export function PostingsPane({ scope, canWrite }: { scope: HostScope; canWrite: 
       listAll(scope, RUNS, [{ field: "status", op: "eq", value: "approved" }]), listAll(scope, "claims", [{ field: "status", op: "eq", value: "approved" }]), readPostings(scope),
     ]);
     const find = (source: string, id: string) => postings.find((r) => prof(r).source === source && prof(r).source_id === id) ?? null;
+    const facts = runs.map(toRunFact);
+    const posted = new Set(postings.filter((r) => prof(r).source === "payroll" && prof(r).stage === "posted").map((r) => String(prof(r).source_id)));
     const items: Postable[] = [
-      ...runs.map((r) => ({ source: "payroll" as const, id: r.id, ref: String(prof(r).run_ref ?? r.id), label: `${t("Payroll")} ${s(prof(r).period)}`, category: "", posting: find("payroll", r.id) })),
-      ...claims.map((r) => ({ source: "claim" as const, id: r.id, ref: `hr-claim-${r.id}`, label: `${t("Claim")}: ${s(prof(r).employee_name)}, ${s(prof(r).merchant)} ${prof(r).currency ?? ""} ${typeof prof(r).amount_minor === "number" ? fromMinor(prof(r).amount_minor as number, String(prof(r).currency ?? "HKD")) : ""}`, category: String(prof(r).category ?? "other"), posting: find("claim", r.id) })),
+      ...runs.map((r) => {
+        const fact = toRunFact(r);
+        return {
+          source: "payroll" as const, id: r.id, ref: fact.runRef, label: `${t("Payroll")} ${s(prof(r).period)}`, category: "", posting: find("payroll", r.id),
+          period: fact.period, runNo: fact.runNo, supersededBy: supersededBy(fact, facts)?.runRef ?? null, postedEarlier: postedEarlier(fact, facts, posted).map((e) => e.runRef),
+        };
+      }),
+      ...claims.map((r) => ({ source: "claim" as const, id: r.id, ref: `hr-claim-${r.id}`, label: `${t("Claim")}: ${s(prof(r).employee_name)}, ${s(prof(r).merchant)} ${prof(r).currency ?? ""} ${typeof prof(r).amount_minor === "number" ? fromMinor(prof(r).amount_minor as number, String(prof(r).currency ?? "HKD")) : ""}`, category: String(prof(r).category ?? "other"), posting: find("claim", r.id), period: "", runNo: 0, supersededBy: null, postedEarlier: [] })),
     ];
-    return items.sort((a, b) => Number(a.posting !== null && prof(a.posting).stage === "posted") - Number(b.posting !== null && prof(b.posting).stage === "posted") || b.ref.localeCompare(a.ref));
+    // Runs first, newest month and highest run number first (numbers compared as numbers: run 10 after run 9), then claims.
+    return items.sort((a, b) => Number(a.source === "claim") - Number(b.source === "claim") || b.period.localeCompare(a.period) || b.runNo - a.runNo || a.ref.localeCompare(b.ref));
   });
   const refresh = () => { void data.store.refresh(); };
   if (preparing) return <PrepareForm scope={scope} item={preparing} onCancel={() => setPreparing(null)} onDone={() => { setPreparing(null); setSaved(true); refresh(); }} />;
@@ -480,7 +503,7 @@ export function PostingsPane({ scope, canWrite }: { scope: HostScope; canWrite: 
             { key: "what", header: t("Approved"), cell: (r) => r.label, cellClassName: "text-ink-100" },
             { key: "ref", header: t("Accounting reference"), cell: (r) => <span className="num">{r.ref}</span>, cellClassName: "hr-nowrap" },
             { key: "state", header: t("Posting"), cell: (r) => <PostingState item={r} /> },
-            { key: "act", header: t("Actions"), cell: (r) => (canWrite && (r.posting === null || prof(r.posting).stage === "prepared")
+            { key: "act", header: t("Actions"), cell: (r) => (canWrite && r.supersededBy === null && (r.posting === null || prof(r.posting).stage === "prepared")
               ? <Button size="sm" onClick={() => { setSaved(false); setPreparing(r); }}>{t(r.posting === null ? "Prepare posting" : "Change accounts")}</Button> : null) },
           ]}
           rows={rows}

@@ -113,6 +113,18 @@ test("hr-posting: Accounting absent means posting is unavailable, and an exact l
   expect(text).toMatch(/record nothing/);
   expect(text).toMatch(/"posting_ref": "<reference>"/);
   expect(text).toMatch(/Never post the same reference twice/);
+  // One payroll a month: every run of the month is read, a superseded run is refused, another run standing in the journal stops.
+  expect(text).toMatch(/`table: "payroll_runs"`, `filters: \[\{"field": "period", "op": "eq"/);
+  expect(text).toMatch(/following `next_cursor` to the end; a read that fails, is refused or is cut short stops/);
+  expect(text).toMatch(/higher `run_no` than this one, refuse/);
+  expect(text).toMatch(/"field": "reverses", "op": "eq", "value": "<its run_ref>"/);
+  expect(text).toMatch(/in the journal and no entry reverses it, stop/);
+  expect(text.indexOf("One payroll a month")).toBeLessThan(text.indexOf("**Stage the batch.**"));
+  // The batch is checked against the posting's own reference by exact string equality before staging.
+  expect(text).toMatch(/exact string equality/);
+  expect(text).toMatch(/`record_id` equal to the posting's `entry_ref`/);
+  expect(text).toMatch(/every `journal_lines` item's `profile\.entry_ref` equals it/);
+  expect(text.indexOf("exact string equality")).toBeLessThan(text.indexOf("**Stage the batch.**"));
   expect(text).toMatch(/never invent an account/);
 });
 
@@ -122,6 +134,8 @@ test("payroll-prep explains and never computes or writes payroll", () => {
   expect(text).toMatch(/Never stage a create or an update on `payroll_runs`, `payroll_lines`, `salaries`, `rate_tables` or `postings`/);
   expect(text).toMatch(/An approved run cannot be changed/);
   expect(text).toMatch(/`hr-posting`/);
+  expect(text).toMatch(/more or fewer lines than that/);
+  expect(text).toMatch(/Only the latest approved run of a month is posted/);
   // No rate figure in the skill: rates are the stored row's.
   expect(text).not.toMatch(/7,100|30,000|1,500/);
 });

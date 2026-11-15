@@ -7,7 +7,7 @@ import { ApiError } from "@cadence/screen-ui";
 import { FIRST_MPF_RATE, rateRecordId } from "../../domain/mpf-rates";
 import type { RateTable } from "../../domain/mpf";
 import {
-  nextRunNo, nextSeq, planRun, runBatch, sameLines, sumTotals, unsavable, type Adjustment, type EmployeeFacts, type PayrollLine, type RunPlan, type SalaryRow,
+  nextRunNo, nextSeq, planRun, postingBlock, runBatch, sameLines, sumTotals, unsavable, type Adjustment, type EmployeeFacts, type PayrollLine, type RunFact, type RunPlan, type SalaryRow,
 } from "../../domain/payroll";
 import {
   claimProposal, payrollProposal, postingProfile, PostingError, type ClaimAccounts, type PayrollAccounts, type Proposal,
@@ -168,11 +168,27 @@ export async function findPosting(scope: HostScope, source: "payroll" | "claim",
 }
 export const readPostings = (scope: HostScope, actions: HostActions = hostActions) => listAll(scope, POSTINGS, [], actions);
 
-/** The proposal for an approved run, from a fresh read of the run and its whole set of lines. */
-export async function runProposal(scope: HostScope, runId: string, accounts: PayrollAccounts, actions: HostActions = hostActions): Promise<Proposal> {
+export const toRunFact = (r: HostRecord): RunFact => ({ runRef: str(p(r).run_ref) ?? r.id, period: str(p(r).period) ?? "", runNo: int(p(r).run_no) ?? 0, status: str(p(r).status) ?? "" });
+/** Every run of a month and the references HR records as posted: what the one-payroll-a-month rule reads. */
+export async function monthPostingFacts(scope: HostScope, period: string, actions: HostActions = hostActions) {
+  const [runs, postings] = await Promise.all([
+    listAll(scope, RUNS, [{ field: "period", op: "eq", value: period }], actions),
+    listAll(scope, POSTINGS, [{ field: "source", op: "eq", value: "payroll" }, { field: "period", op: "eq", value: period }], actions),
+  ]);
+  return { runs: runs.map(toRunFact), posted: new Set(postings.filter((r) => p(r).stage === "posted").map((r) => String(p(r).source_id))) };
+}
+/**
+ * The proposal for an approved run, from a fresh read of the run and its whole set of lines. One payroll a month goes
+ * to the books: a superseded run is refused, and so is a run while an earlier run of the month is recorded as posted,
+ * unless the owner confirms (`reversed`) they reversed that one in Accounting.
+ */
+export async function runProposal(scope: HostScope, runId: string, accounts: PayrollAccounts, actions: HostActions = hostActions, reversed: ReadonlySet<string> = new Set()): Promise<Proposal> {
   const run = await actions.show(scope, runId, RUNS);
   const x = p(run);
   if (x.status !== "approved") throw new FormError(null, NOT_APPROVED_TEXT);
+  const facts = await monthPostingFacts(scope, String(x.period), actions);
+  const block = postingBlock(toRunFact(run), facts.runs, facts.posted, reversed);
+  if (block !== null) throw new FormError(null, block);
   const lines = await runLines(scope, run, actions);
   return payrollProposal({ runRef: String(x.run_ref), period: String(x.period), entryDate: String(x.entry_date), runNo: int(x.run_no) ?? 0 }, sumTotals(lines), accounts);
 }

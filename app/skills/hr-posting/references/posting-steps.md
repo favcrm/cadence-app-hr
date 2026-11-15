@@ -10,11 +10,19 @@
 | `entry_date`, `period` | the entry's date and its month |
 | `batch` | the exact `records.batch` arguments for Accounting: one `journal_entries` item and two or more `journal_lines` items |
 | `stage` | `prepared`, or `posted` once HR has recorded it; a posted row cannot change |
-| `posting_ref`, `posted_on` | null until step 8 records them |
+| `posting_ref`, `posted_on` | null until step 10 records them |
 
-Until it is recorded as posted, the owner can prepare the row again with other accounts, so the journal's lines can differ from the row's: step 8 compares them before it records anything.
+Until it is recorded as posted, the owner can prepare the row again with other accounts, so the journal's lines can differ from the row's: step 10 compares them before it records anything.
 
 A payroll run is posted as totals by account (salaries, employer MPF, net pay, MPF payable), never per employee. A claim is its expense against the amount owed to the employee. The screen computed every figure; you copy them.
+
+## One payroll a month
+
+An approved run cannot change, so a correction is a later run of the same month (`-2`, `-3`). The HR screen marks an
+approved run superseded once a later run of its month is approved, and will not prepare it. It cannot read Accounting,
+so before a later run is prepared while an earlier one is recorded as posted, the owner confirms they reversed the
+earlier one in the Journal. Step 4 checks that in the journal: an earlier run's entry that no entry `reverses` still
+stands, and this run is not posted.
 
 ## Opening balances (Accounting)
 
@@ -35,7 +43,7 @@ The owner asks: "Post the January payroll." The prepared posting for `hr-payroll
 | 1020 | | 34,000.00 |
 | 2110 | | 2,750.00 |
 
-`app_describe` lists Accounting; the HR run is `approved`; `journal_entries` has no `hr-payroll-2026-01-1`; the chart returns all four codes active; the standing opening balances are dated 2025-12-31, before 2026-01-31. You stage `records.batch` on Accounting with the posting's `batch` unchanged. The owner approves; the `eq` read finds the entry; you stage the HR `postings` update with `stage` `posted`, `posting_ref` `hr-payroll-2026-01-1` and today's date.
+`app_describe` lists Accounting; the HR run is `approved` and is the only approved run of January; the batch's entry and lines all carry `hr-payroll-2026-01-1`; `journal_entries` has no `hr-payroll-2026-01-1`; the chart returns all four codes active; the standing opening balances are dated 2025-12-31, before 2026-01-31. You stage `records.batch` on Accounting with the posting's `batch` unchanged. The owner approves; the `eq` read finds the entry; you stage the HR `postings` update with `stage` `posted`, `posting_ref` `hr-payroll-2026-01-1` and today's date.
 
 ## Saying it
 

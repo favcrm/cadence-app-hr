@@ -98,7 +98,9 @@ skill read that same aggregate.
 - Posting: for an approved run or claim the screen computes the Accounting journal batch (totals by account, no
   employee names) and stores it on a `postings` row; `hr-posting` copies it to the Accounting app (reference
   `hr-payroll-<YYYY-MM>-<run>` or `hr-claim-<claim id>`), then records `posting_ref` only when an exact read of the
-  journal shows the entry. With the Accounting app absent, posting is unavailable and the rest of HR works.
+  journal shows the entry and its lines match. Only one run of a month is posted: a later approved run supersedes an
+  earlier one, and `hr-posting` stops while another run of the month stands in the journal unreversed. With the
+  Accounting app absent, posting is unavailable and the rest of HR works.
 
 ## Agent procedure
 

@@ -8,8 +8,6 @@ import { realDate } from "./people";
 /** Changes whenever a line's arithmetic or inputs change; every stored line carries it. */
 export const CALC_VERSION = "payroll-1";
 export const PAYROLL_CURRENCY = "HKD";
-/** Lines in one run: Accounting takes at most 199 lines in an entry, and HR posts a run as one entry. */
-export const MAX_LINES = 199;
 /**
  * The bytes of `records.batch` arguments a run is saved in. The receiver allows 49,152, but a board without the
  * CAD-2263 limit closes the frame above 16,384, so a run is held to that (as Run accrual is). A run is one batch,
@@ -142,7 +140,6 @@ export function unsavable(plan: RunPlan): string | null {
   if (plan.rate === null) return "No MPF rate is in effect for this month. Add the MPF rates first.";
   if (plan.invalid.length > 0) return "Some deductions are more than the pay. Correct them before saving.";
   if (plan.lines.length === 0) return "Nobody is paid in this month, so there is no run to save.";
-  if (plan.lines.length > MAX_LINES) return "This run has more lines than one Accounting entry can hold.";
   if (batchBytes(runBatch(plan)) > RUN_BATCH_BYTES) return "This run is too large to save in one step from this screen.";
   return null;
 }
@@ -163,6 +160,32 @@ export function sameLines(stored: readonly unknown[], planned: readonly PayrollL
   if (stored.length !== planned.length) return false;
   const byEmployee = new Map(stored.map((p) => [(p as Record<string, unknown> | null)?.employee_id, p as Record<string, unknown>]));
   return planned.every((line) => { const s = byEmployee.get(line.employee_id); return s !== undefined && LINE_KEYS.every((k) => s[k] === line[k]); });
+}
+
+// ---- one payroll per month in the books ---------------------------------------------------------------------------
+/** What the one-payroll-a-month rule needs of a stored run. */
+export interface RunFact { runRef: string; period: string; runNo: number; status: string }
+/**
+ * The run that supersedes this one, or null. An approved run cannot change, so a correction is a later run of the
+ * same month; once a later-numbered run of that month is approved, this one is superseded. Derived, never stored.
+ */
+export function supersededBy(run: RunFact, runs: readonly RunFact[]): RunFact | null {
+  return runs.filter((r) => r.period === run.period && r.status === "approved" && r.runNo > run.runNo).sort((a, b) => b.runNo - a.runNo)[0] ?? null;
+}
+/** Earlier approved runs of the same month that HR records as posted: they stand in the books until reversed there. */
+export function postedEarlier(run: RunFact, runs: readonly RunFact[], posted: ReadonlySet<string>): RunFact[] {
+  return runs.filter((r) => r.period === run.period && r.status === "approved" && r.runNo < run.runNo && posted.has(r.runRef)).sort((a, b) => a.runNo - b.runNo);
+}
+export const SUPERSEDED_TEXT = "This run is superseded: a later run for the same month is approved. Only the latest approved run of a month is posted.";
+export const POSTED_EARLIER_TEXT = "An earlier run for this month is recorded as posted. Reverse it in the Accounting app's Journal first, then confirm that here and ask the assistant to post this run; it checks the journal before it stages anything.";
+/**
+ * Why a run cannot be prepared for posting, or null. `reversed` lists the earlier references the owner confirms they
+ * reversed in Accounting: the screen cannot read Accounting, so the `hr-posting` skill checks the journal itself.
+ */
+export function postingBlock(run: RunFact, runs: readonly RunFact[], posted: ReadonlySet<string>, reversed: ReadonlySet<string> = new Set()): string | null {
+  if (supersededBy(run, runs) !== null) return SUPERSEDED_TEXT;
+  if (postedEarlier(run, runs, posted).some((r) => !reversed.has(r.runRef))) return POSTED_EARLIER_TEXT;
+  return null;
 }
 
 /** The next run number for a period: one more than any stored, whatever its status. */

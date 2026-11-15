@@ -167,7 +167,7 @@ read, explain and copy them.
 - **Who is in a run.** An employee with a join date on or before the month's end, not left before it (a leave date
   before the month, or status `left` with none), with an HKD salary in effect (the latest `effective_from` on or before
   the month's last day; on one date the highest `seq`). The others are listed with the reason.
-- **Posting.** Payroll → Postings lists approved runs and approved claims. "Prepare posting" computes the Accounting
+- **Posting.** Payroll → Postings lists approved runs (newest month and run number first, compared as numbers) and approved claims. "Prepare posting" computes the Accounting
   entry (`src/domain/posting.ts`) and stores it as a `postings` row holding the exact `records.batch` arguments for
   Accounting 0.3.0: one `journal_entries` row (`source` `payroll` or `claim`, `reverses` null, record id the reference)
   and `journal_lines` rows (`<ref>-001`...), signed HKD minor units, `base_minor` = `amount_minor`, each repeating the
@@ -184,6 +184,16 @@ read, explain and copy them.
   "HR has a record that this was posted", never that the journal holds it. Posting a run twice gives one entry:
   Accounting's unique `entry_ref` refuses a second batch, and the skill's exact lookup stops before it
   (`tests/unit/payroll_host.test.ts`).
+- **One payroll a month in the books.** An approved run cannot change, so a correction is a later run of the month.
+  Once a later-numbered run of the same month is approved, the earlier approved run is *superseded* (derived from the
+  runs, never stored): Postings shows it as superseded and "Prepare posting" refuses it. Preparing a later run while
+  an earlier run of the month is recorded as posted is refused until the owner confirms on the form that they
+  reversed that entry in Accounting's Journal; the screen cannot read Accounting, so `hr-posting` checks it: it reads
+  every run of the month (an incomplete read stops), refuses a run that a later approved run supersedes, and stops if
+  another approved run's entry is in the journal with no entry that `reverses` it. Before staging, it also checks by
+  string equality that the batch's entry `record_id` and `entry_ref` and every line's `entry_ref` are the posting's
+  `entry_ref`. Tests: `tests/unit/payroll.test.ts` (the rule), `tests/unit/payroll_host.test.ts` (the screen's
+  refusals) and `tests/unit/skills.test.mjs` (the skill's steps).
 - **Without Accounting.** HR never calls another app from the screen. Payroll, Postings and every other tab work;
   only the posting step is unavailable.
 - **Known limits.** Monthly calendar wage periods only; the minimum and maximum levels are the monthly ones even for a
@@ -194,8 +204,9 @@ read, explain and copy them.
   refused by the host; approval checks the run's lines first. A posting's `posting_ref` is not compared with its
   `entry_ref` by the host (the rule cannot compare fields); the screen flags a mismatch. `payroll_lines` is
   append-only, which refuses an update but not a new line: a staged create under an approved run's reference with
-  another employee passes the host. The screen and the skills check a run's lines against its `line_count`, so such a
-  run is shown as not matching and cannot be approved or posted; the host's table `lock` option (lines locked by
+  another employee passes the host. The screen checks a run's lines against its `line_count` before approving it or
+  preparing its posting (tested in `payroll_host.test.ts`), so such a run cannot be approved or posted, and
+  `payroll-prep` says a run whose lines do not match its count has no figures to give; the host's table `lock` option (lines locked by
   `run_ref` once the run is approved) is the proper fix, not adopted in 0.4.0 because checker and board support for it
   is unverified.
 

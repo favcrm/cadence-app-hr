@@ -145,3 +145,38 @@ test("a posting that lands but loses its reply is found again, not written twice
   expect(row.profile.stage).toBe("prepared");
   expect(host.of("postings").length).toBe(1);
 });
+
+test("an extra line under a run is caught: a draft cannot be approved and an approved run cannot be prepared", async () => {
+  const host = await seeded();
+  await savedRun(host);
+  const extra = { ...host.of("payroll_lines")[0]!.profile, employee_id: "emp-zzz", employee_name: "Someone Else" };
+  // append-only refuses an update, not a new line: a staged create with another employee passes the host.
+  await host.actions.create(scope, "hr-payroll-2026-01-1-099", extra, "payroll_lines");
+  const run = await host.actions.show(scope, "hr-payroll-2026-01-1", "payroll_runs");
+  await expect(decideRun(scope, run, "approved", "2026-02-01", "", host.actions)).rejects.toThrow(/do not match/);
+  // An approved run that gains a line later cannot be prepared for posting.
+  const clean = await seeded();
+  await savedRun(clean);
+  const approved = await decideRun(scope, await clean.actions.show(scope, "hr-payroll-2026-01-1", "payroll_runs"), "approved", "2026-02-01", "", clean.actions);
+  await clean.actions.create(scope, "hr-payroll-2026-01-1-099", extra, "payroll_lines");
+  await expect(runProposal(scope, approved.id, DEFAULT_PAYROLL_ACCOUNTS, clean.actions)).rejects.toThrow(/do not match/);
+});
+
+test("one payroll a month: a superseded run cannot be prepared, and a later run waits while an earlier one is recorded as posted", async () => {
+  const host = await seeded();
+  await savedRun(host);
+  const first = await decideRun(scope, await host.actions.show(scope, "hr-payroll-2026-01-1", "payroll_runs"), "approved", "2026-02-01", "", host.actions);
+  const posting = await preparePosting(scope, await runProposal(scope, first.id, DEFAULT_PAYROLL_ACCOUNTS, host.actions), host.actions);
+  await host.actions.update(scope, posting.id, posting.revision, { stage: "posted", posting_ref: "hr-payroll-2026-01-1", posted_on: "2026-02-03" }, "postings");
+  // A corrected run: run 2 of the same month, approved.
+  const plan = computeRun(await readRunInputs(scope, "2026-01", host.actions), { "emp-a": { additionsMinor: 50000, deductionsMinor: 0 } });
+  expect(plan.runRef).toBe("hr-payroll-2026-01-2");
+  await saveRun(scope, plan, host.actions);
+  const second = await decideRun(scope, await host.actions.show(scope, "hr-payroll-2026-01-2", "payroll_runs"), "approved", "2026-02-04", "", host.actions);
+  // Run 1 is now superseded: it cannot be prepared again.
+  await expect(runProposal(scope, first.id, DEFAULT_PAYROLL_ACCOUNTS, host.actions)).rejects.toThrow(/superseded/);
+  // Run 2 waits while run 1 is recorded as posted, until the owner confirms it was reversed in Accounting.
+  await expect(runProposal(scope, second.id, DEFAULT_PAYROLL_ACCOUNTS, host.actions)).rejects.toThrow(/earlier run for this month is recorded as posted/);
+  const proposal = await runProposal(scope, second.id, DEFAULT_PAYROLL_ACCOUNTS, host.actions, new Set(["hr-payroll-2026-01-1"]));
+  expect(proposal.entryRef).toBe("hr-payroll-2026-01-2");
+});

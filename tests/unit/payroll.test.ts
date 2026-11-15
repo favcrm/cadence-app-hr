@@ -173,9 +173,26 @@ test("every payroll and posting message the screen shows has a zh-HK entry", asy
   const found = new Set<string>(Object.values(SKIP_TEXT));
   for (const m of read("src/domain/posting.ts").matchAll(/PostingError\("([^"]+)"\)/g)) found.add(m[1]!);
   for (const m of read("src/domain/payroll.ts").matchAll(/return "([^"]* [^"]*)";/g)) found.add(m[1]!);
+  for (const m of read("src/domain/payroll.ts").matchAll(/_TEXT = "([^"]+)";/g)) found.add(m[1]!);
   for (const m of read("src/features/hr/PayrollPanes.tsx").matchAll(/hostErrorText\([^,]+, "([^"]+)"\)/g)) found.add(m[1]!);
   for (const m of read("src/features/hr/PayrollPanes.tsx").matchAll(/(?:salaries|mpfExpense|netPay|mpfPayable|expense|payable): "([^"]+)"/g)) found.add(m[1]!);
   for (const s of ["Payroll", "Payroll runs", "Salaries", "MPF rates", "Postings", "Prepared", "Posted", "Draft", "Approved", "Cancelled"]) found.add(s);
   expect(found.size).toBeGreaterThan(20);
   expect([...found].filter((s) => !(s in zhHK))).toEqual([]);
+});
+
+test("one payroll a month in the books: a later approved run supersedes an earlier one, and a posted earlier run blocks until reversed", async () => {
+  const { supersededBy, postedEarlier, postingBlock, SUPERSEDED_TEXT, POSTED_EARLIER_TEXT } = await import("../../src/domain/payroll.ts");
+  const run = (n: number, status: string, period = "2026-01") => ({ runRef: `hr-payroll-${period}-${n}`, period, runNo: n, status });
+  const runs = [run(1, "approved"), run(2, "cancelled"), run(3, "approved"), run(4, "draft"), run(1, "approved", "2026-02")];
+  expect(supersededBy(runs[0]!, runs)?.runRef).toBe("hr-payroll-2026-01-3");
+  expect(supersededBy(runs[2]!, runs)).toBeNull(); // a draft or a cancelled run supersedes nothing
+  expect(supersededBy(runs[4]!, runs)).toBeNull(); // another month
+  expect(postingBlock(runs[0]!, runs, new Set())).toBe(SUPERSEDED_TEXT);
+  expect(postingBlock(runs[2]!, runs, new Set())).toBeNull();
+  const posted = new Set(["hr-payroll-2026-01-1"]);
+  expect(postedEarlier(runs[2]!, runs, posted).map((r) => r.runRef)).toEqual(["hr-payroll-2026-01-1"]);
+  expect(postingBlock(runs[2]!, runs, posted)).toBe(POSTED_EARLIER_TEXT);
+  expect(postingBlock(runs[2]!, runs, posted, new Set(["hr-payroll-2026-01-1"]))).toBeNull();
+  expect(postingBlock(runs[4]!, runs, posted)).toBeNull();
 });
