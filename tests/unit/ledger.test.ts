@@ -484,6 +484,28 @@ test("a deduction stored in an unexpected form is listed apart and never reverse
   expect(host.calls.filter((c) => c.args.table === "leave_requests" && c.args.filters[0].value === "rejected").length).toBe(G.RECOVERY_PAGES);
 });
 
+test("the recovery notes fill every placeholder, in English and zh-HK, and the staff balances note stays after posting", async () => {
+  const { renderToStaticMarkup } = await import("react-dom/server");
+  const { createElement } = await import("react");
+  const { HrLocaleProvider } = await import("../../src/features/hr/locale.tsx");
+  const N = await import("../../src/features/hr/RecoveryNotes.tsx");
+  const entry = (L.reversalEntry("mem_0001", takenOf("mem_0001", -2)) as { entry: L.LedgerEntry }).entry;
+  const rows = Array.from({ length: 12 }, (_, i) => ({ requestId: `r${i}`, staff: i === 0, entry }));
+  const plan = { rows, alreadyThere: 1, unusable: [{ id: "lv-bad", reason: "x" }], more: true };
+  for (const locale of ["en", "zh-TW"] as const) {
+    const render = (node: unknown) => renderToStaticMarkup(createElement(HrLocaleProvider, { locale }, node as never));
+    const html = render(createElement(N.RecoverySummary, { plan, nameOf: (id: string) => `Name of ${id}` }));
+    expect(html).toContain("data-recovery-more");
+    expect(html).toContain("data-staff-balances-note");
+    expect(html).toContain(String(G.RECOVERY_LIMIT));
+    expect(html).not.toContain("{");
+    // The notice after posting repeats the staff balances note, and only when a staff request was reversed.
+    expect(render(createElement(N.StaffBalancesNote, { plan }))).toContain("data-staff-balances-note");
+    expect(render(createElement(N.StaffBalancesNote, { plan: { ...plan, rows: rows.slice(1) } }))).toBe("");
+  }
+  expect(N.fillCount("{count} and {count}", "5")).toBe("5 and 5");
+});
+
 // ---- corrections ---------------------------------------------------------------------------------------------
 test("an adjustment is a new signed entry with a required note; a retry with the same reference adds no second entry", async () => {
   const host = makeHost();

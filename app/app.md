@@ -52,10 +52,10 @@ record opens HR and sees only My leave, My claims and Clock, over their own rows
 owner gets Leave → Staff requests, Claims → Staff claims, People → Staff accounts, an Attendance tab with a device
 import and corrections, and the `attendance-review` skill.
 
-Release 0.5.1 is a leave fix with no storage change: Leave → Balances → "Reverse deductions on rejected requests"
-reverses, once each, the `taken` entry left on a request that was rejected or cancelled outside the screen after its
-approval had deducted the leave, and the balance beside a new request no longer shows an "after this request" figure
-for an employee with no entries.
+Release 0.5.1 is a leave fix with no storage change: Leave → Balances → "Reverse deductions on rejected or
+cancelled requests" reverses, once each, the `taken` entry left on a request that was rejected or cancelled outside
+the screen after its approval had deducted the leave, and the balance beside a new request no longer shows an "after
+this request" figure for an employee with no entries.
 
 The package requires `app-screens`, `screen-records`, `screen-startup` and `app-storage` v1. The screen under
 `screens/hr/` uses the host's pinned screen UI and the released app-kit receiver; Cadence keeps scope, storage,
@@ -93,7 +93,7 @@ skill read that same aggregate.
   it first writes a compensating `adjustment` (`reversal-taken-<request id>`). A request with such an entry cannot
   be edited in the screen until the decision is finished. A request rejected or cancelled outside the screen after
   its entry was written keeps the deduction until the owner runs Leave → Balances → "Reverse deductions on rejected
-  requests", which writes the same reversal once.
+  or cancelled requests", which writes the same reversal once.
 - Run accrual (Leave → Balances) posts `accrual-<employee id>-<leave type>-<YYYY-MM>` entries with `records.batch`,
   only the ones not already there. The yearly entitlement comes from `leave_types.accrual_rule`, the customer's own data:
   `{"v":1,"days_per_year":[{"from_years":0,"days":7},{"from_years":3,"days":8}]}`. No figure ships with the app.

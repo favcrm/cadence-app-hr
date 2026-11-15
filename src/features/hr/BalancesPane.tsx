@@ -5,10 +5,11 @@ import { emptyValues, ADJUSTMENT, todayLocal, newRecordId, type Values } from ".
 import type { HostScope } from "./hostActions";
 import { hostErrorText } from "./hostErrors";
 import {
-  adjustBalance, adjustmentRef, listAll, PostStopped, planMonth, planReconcile, planRecovery, postEntries, readBalances, RECOVERY_LIMIT, type PostResult, type ReconcilePlan,
+  adjustBalance, adjustmentRef, listAll, PostStopped, planMonth, planReconcile, planRecovery, postEntries, readBalances, type PostResult, type ReconcilePlan,
   type RecoveryPlan,
 } from "./ledger";
 import { useLocale } from "./locale";
+import { fillCount, RecoverySummary, StaffBalancesNote } from "./RecoveryNotes";
 import RecordForm, { type RecordProblem } from "./RecordForm";
 import { problemFor } from "./recordsSubmit";
 import { QueryRefresh, useHrLoader } from "./resources";
@@ -24,9 +25,9 @@ type Phase<P> =
   | { s: "done"; plan: P; result: PostResult }
   | { s: "error"; message: string; done: PostResult | null };
 
-function StepAction<P>({ title, intro, children, reviewLabel, reviewDisabled = false, postLabel, review, summary, count, post, disabled, onPosted }: {
+function StepAction<P>({ title, intro, children, reviewLabel, reviewDisabled = false, postLabel, review, summary, doneNote, count, post, disabled, onPosted }: {
   title: string; intro: string; children?: ReactNode; reviewLabel: string; reviewDisabled?: boolean; postLabel: (n: number) => string;
-  review: () => Promise<P>; summary: (plan: P) => ReactNode; count: (plan: P) => number;
+  review: () => Promise<P>; summary: (plan: P) => ReactNode; doneNote?: (plan: P) => ReactNode; count: (plan: P) => number;
   post: (plan: P, onProgress: (done: number, total: number) => void) => Promise<PostResult>;
   disabled: string | null; onPosted: () => void;
 }) {
@@ -71,6 +72,7 @@ function StepAction<P>({ title, intro, children, reviewLabel, reviewDisabled = f
             <Notice state="saved">
               {t("{posted} entries posted.").replace("{posted}", formatNumber(phase.result.posted))}
               {phase.result.alreadyThere > 0 && <> {t("{count} were already recorded and were not added again.").replace("{count}", formatNumber(phase.result.alreadyThere))}</>}
+              {doneNote?.(phase.plan)}
             </Notice>
           )}
           {phase.s === "error" && (
@@ -154,33 +156,16 @@ function RecordEarlier({ scope, caps, onPosted }: { scope: HostScope; caps: Ledg
 
 /** Rejected or cancelled requests whose deduction still stands: list them, then write each one's reversal once. */
 function RecoverDeductions({ scope, caps, nameOf, onPosted }: { scope: HostScope; caps: LedgerCaps; nameOf: (id: string) => string; onPosted: () => void }) {
-  const { t, formatNumber } = useLocale();
-  const n = (text: string, count: number) => t(text).replace("{count}", formatNumber(count));
+  const { t } = useLocale();
   return (
     <StepAction<RecoveryPlan>
-      title={t("Reverse deductions on rejected requests")}
+      title={t("Reverse deductions on rejected or cancelled requests")}
       intro={t("A request rejected or cancelled outside this screen, for example from the chat, after its approval had already deducted the leave keeps that deduction. This finds those requests and adds the reversing entry once each; requests already reversed are left alone.")}
       disabled={caps.aggregate && caps.batch ? null : t("This workspace does not offer batch entries to this screen, so this cannot run here.")}
-      reviewLabel={t("Find rejected requests that still deduct leave")} postLabel={(count) => t("Reverse {count} deductions").replace("{count}", String(count))}
+      reviewLabel={t("Find rejected or cancelled requests that still deduct leave")} postLabel={(count) => fillCount(t("Reverse {count} deductions"), String(count))}
       review={() => planRecovery(scope)}
-      summary={(plan) => {
-        const shown = plan.rows.slice(0, 10);
-        const staff = plan.rows.filter((r) => r.staff).length;
-        return (
-          <div className="grid gap-1">
-            <p className="text-label">{n("{count} rejected or cancelled requests still deduct leave.", plan.rows.length)}{plan.alreadyThere > 0 && <> {n("{count} were already reversed.", plan.alreadyThere)}</>}</p>
-            {shown.length > 0 && (
-              <ul className="hr-reasons">
-                {shown.map((r) => <li key={r.requestId}>{nameOf(r.entry.employee_id)} — {r.entry.leave_type}, {t("{days} days").replace("{days}", signedDays(r.entry.half_days))}</li>)}
-              </ul>
-            )}
-            {plan.rows.length > shown.length && <p className="text-micro text-ink-500">{n("and {count} more requests", plan.rows.length - shown.length)}</p>}
-            {plan.unusable.length > 0 && <p className="text-label text-ink-400">{n("{count} cannot be reversed here because their leave entry is not in the expected form. Correct those balances with an adjustment.", plan.unusable.length)}</p>}
-            {plan.more && <p className="text-label text-ink-400">{n("Only the newest {count} rejected and {count} cancelled requests in each of Leave requests and Staff requests were checked; older ones are not shown.", RECOVERY_LIMIT)}</p>}
-            {staff > 0 && <p className="text-label text-ink-400">{n("{count} of them were filed from the staff view. After reversing, use Update staff balances in People → Staff accounts so those employees see the change.", staff)}</p>}
-          </div>
-        );
-      }}
+      summary={(plan) => <RecoverySummary plan={plan} nameOf={nameOf} />}
+      doneNote={(plan) => <StaffBalancesNote plan={plan} />}
       count={(plan) => plan.rows.length}
       post={(plan, onProgress) => postEntries(scope, plan.rows.map((r) => r.entry), onProgress)}
       onPosted={onPosted}

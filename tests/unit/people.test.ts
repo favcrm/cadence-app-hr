@@ -102,6 +102,27 @@ test("write refusals are classified by what the frame can tell", () => {
   expect(classifyWriteFailure({ status: 429, code: "conflict" }, "create")).toBe("neutral");
 });
 
+test("every catalog placeholder is kept in zh-HK, and a string filled with a single .replace names each placeholder once", () => {
+  const holders = (text: string) => [...text.matchAll(/\{(\w+)\}/g)].map((m) => m[1]!).sort();
+  // The zh-HK text has the same placeholders, as many times, as the English it translates.
+  expect(Object.entries(zhHK).filter(([en, zh]) => JSON.stringify(holders(en)) !== JSON.stringify(holders(zh)))).toEqual([]);
+  // `t("…").replace("{x}", …)` fills only the first `{x}`: such a string (and its zh-HK text) must hold `{x}` once.
+  const dir = fileURLToPath(new URL("../../src/", import.meta.url));
+  const files = readdirSync(dir + "features/hr").filter((f) => /\.tsx?$/.test(f)).map((f) => dir + "features/hr/" + f);
+  const repeated: string[] = [];
+  for (const file of files) {
+    const source = readFileSync(file, "utf8");
+    // The `.replace` calls that follow a `t("…")` on its line, up to the next `t(`.
+    for (const m of source.matchAll(/\bt\("((?:[^"\\]|\\.)*)"\)([^\n]*)/g)) {
+      const chain = m[2]!.split(/\bt\(/)[0]!;
+      for (const name of [...chain.matchAll(/\.replace\("\{(\w+)\}"/g)].map((r) => r[1]!)) {
+        for (const text of [m[1]!, zhHK[m[1]!] ?? ""]) if (holders(text).filter((h) => h === name).length > 1) repeated.push(`${file.split("/").pop()}: ${m[1]}`);
+      }
+    }
+  }
+  expect(repeated).toEqual([]);
+});
+
 test("every English string the screen translates has a zh-HK entry", () => {
   const dir = fileURLToPath(new URL("../../src/", import.meta.url));
   const files = [...readdirSync(dir + "features/hr").filter((f) => /\.tsx?$/.test(f) && f !== "localeCatalog.ts").map((f) => dir + "features/hr/" + f), dir + "domain/people.ts"];

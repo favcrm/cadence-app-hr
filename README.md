@@ -102,7 +102,7 @@ type. Approving a request deducts leave, an accrual run adds it, and a correctio
 - **Record earlier approvals** (Leave → Balances, owner). Finds every approved request without a `taken` entry,
   whenever and however it was approved (before 0.3.0, or from a chat-staged approval, which skips the screen) and posts
   the missing entries once. Requests that already have one are left alone.
-- **Reverse deductions on rejected requests** (Leave → Balances, owner, 0.5.1). Lists rejected and cancelled requests,
+- **Reverse deductions on rejected or cancelled requests** (Leave → Balances, owner, 0.5.1). Lists rejected and cancelled requests,
   in `leave_requests` and `staff_leave_requests`, that have a `taken-<id>` entry and no `reversal-taken-<id>` (an
   approval stopped after its entry and the request was then rejected outside the screen, such as a chat-staged
   status change), and writes the reject path's own reversal (`reversalEntry`, from the stored entry) once each with
@@ -111,7 +111,7 @@ type. Approving a request deducts leave, an accrual run adds it, and a correctio
   there are more, and a leftover older than that window stays out of reach: correct it with an adjustment), then the ledger by exact `source_ref` (`in`, 50 at a time). A member files only `pending` rows and
   never updates, so a member's flood is never in these lists (tested with 5,000 rows). A stored entry not in the
   expected form is listed apart and left for an adjustment. A reversed staff request changes that member's balance:
-  the summary says to run Update staff balances.
+  the summary, and the notice after posting, say to run Update staff balances.
 - **Adjust balance** (owner). A new `adjustment` entry with a required note, whole or half days with a sign. No entry is
   ever updated; a mistake is corrected by another adjustment.
 - **Balances.** The Balances list, the employee detail and the balance beside a new request all come from one
@@ -125,7 +125,7 @@ type. Approving a request deducts leave, an accrual run adds it, and a correctio
   (approved leave not yet taken). `leave-desk` states a balance only from the same aggregate, with its as-of moment.
 - **Known limits.** If a request is rejected or changed from another session between the screen's re-read and its status
   update, a `taken` entry can exist for a request that did not end approved; from 0.5.1 "Reverse deductions on
-  rejected requests" finds a rejected or cancelled one and reverses it (one changed and still pending, or approved,
+  rejected or cancelled requests" finds a rejected or cancelled one and reverses it (one changed and still pending, or approved,
   needs an adjustment). The edit
   refusal is the screen's: the host's write rule lets a staged chat edit change a pending request that has a `taken`
   entry (approve then meets a different entry and stops; reject reverses the stored entry). A chat-staged approval is
