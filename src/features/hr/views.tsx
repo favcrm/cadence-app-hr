@@ -44,7 +44,7 @@ export const leaveTypesView: View = {
 };
 export const claimsView: View = {
   id: "claims", title: "Claims", spec: CLAIM, newLabel: "Add claim", searchHint: "Search claims…", kind: "decision", open: CLAIM_OPEN, newId: "cl",
-  // No `paid`: 0.2.0 cannot write it (the write rule refuses it); it returns with payroll in 0.4.0.
+  // No `paid`: the write rule refuses it. Posting an approved claim to Accounting is recorded on a `postings` row instead.
   filter: { field: "status", values: ["submitted", "approved", "rejected"], initial: CLAIM_OPEN },
   columns: (p, t) => {
     const minor = n(p.amount_minor);

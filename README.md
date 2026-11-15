@@ -192,7 +192,12 @@ read, explain and copy them.
   larger run is refused with a message. A payroll line holds the employee's name at save time. A draft's number is
   used once: a cancelled draft keeps it, so the posted run may be `-2`. A staged update to a draft run is not
   refused by the host; approval checks the run's lines first. A posting's `posting_ref` is not compared with its
-  `entry_ref` by the host (the rule cannot compare fields); the screen flags a mismatch.
+  `entry_ref` by the host (the rule cannot compare fields); the screen flags a mismatch. `payroll_lines` is
+  append-only, which refuses an update but not a new line: a staged create under an approved run's reference with
+  another employee passes the host. The screen and the skills check a run's lines against its `line_count`, so such a
+  run is shown as not matching and cannot be approved or posted; the host's table `lock` option (lines locked by
+  `run_ref` once the run is approved) is the proper fix, not adopted in 0.4.0 because checker and board support for it
+  is unverified.
 
 ## Local development
 
@@ -298,8 +303,9 @@ the descriptor version, so they are not permanent decisions. In 0.2.0:
 - An update is refused unless the stored record is still open. The rule sees the stored row (`before`) and the merged
   row (`after`) but cannot compare a field across them, so "an approved claim's amount cannot change" is enforced by
   freezing the whole decided claim.
-- A claim's status can only be `submitted`, `approved` or `rejected`. Nothing in 0.2.0 (rule, screen or skill) can
-  mark a claim paid; `paid` returns with payroll in 0.4.0, which must change the rule first.
+- A claim's status can only be `submitted`, `approved` or `rejected`. Nothing (rule, screen or skill) can mark a claim
+  paid. 0.4.0 leaves that rule as it is: posting an approved claim to Accounting is recorded on a separate `postings`
+  row, so an approved claim stays frozen.
 
 The host reports a refused write as status 400, which the board shows as `failed`: the screen says the record
 "may already be decided" and offers a reload instead of claiming a cause.

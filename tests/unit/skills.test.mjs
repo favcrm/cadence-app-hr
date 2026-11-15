@@ -107,7 +107,10 @@ test("hr-posting: Accounting absent means posting is unavailable, and an exact l
   expect(text).toMatch(/on or before its standing opening balances/);
   // It copies the screen's batch and records posting_ref only after the journal shows the entry.
   expect(text).toMatch(/exactly the posting's `batch` value/);
-  expect(text).toMatch(/Only if the entry is there, stage one HR update/);
+  expect(text).toMatch(/Only if the entry is there and its lines match, stage one HR update/);
+  expect(text).toMatch(/`table: "journal_lines"`/);
+  expect(text).toMatch(/same `account_code` and `amount_minor`/);
+  expect(text).toMatch(/record nothing/);
   expect(text).toMatch(/"posting_ref": "<reference>"/);
   expect(text).toMatch(/Never post the same reference twice/);
   expect(text).toMatch(/never invent an account/);

@@ -12,6 +12,8 @@
 | `stage` | `prepared`, or `posted` once HR has recorded it; a posted row cannot change |
 | `posting_ref`, `posted_on` | null until step 8 records them |
 
+Until it is recorded as posted, the owner can prepare the row again with other accounts, so the journal's lines can differ from the row's: step 8 compares them before it records anything.
+
 A payroll run is posted as totals by account (salaries, employer MPF, net pay, MPF payable), never per employee. A claim is its expense against the amount owed to the employee. The screen computed every figure; you copy them.
 
 ## Opening balances (Accounting)
