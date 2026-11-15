@@ -1,0 +1,92 @@
+{
+  "version": 4,
+  "operations": [
+    {
+      "op": "create_table",
+      "table": "rate_tables",
+      "columns": [
+        {"name": "effective_from", "type": "text", "nullable": false, "max_length": 10, "json_schema": {"type": "string", "pattern": "^[0-9-]{10}$"}},
+        {"name": "employer_rate_bp", "type": "integer", "nullable": false, "json_schema": {"type": "integer", "minimum": 0, "maximum": 10000}},
+        {"name": "employee_rate_bp", "type": "integer", "nullable": false, "json_schema": {"type": "integer", "minimum": 0, "maximum": 10000}},
+        {"name": "min_relevant_income_minor", "type": "integer", "nullable": false, "json_schema": {"type": "integer", "minimum": 0, "maximum": 99999999999}},
+        {"name": "max_relevant_income_minor", "type": "integer", "nullable": false, "json_schema": {"type": "integer", "minimum": 1, "maximum": 99999999999}},
+        {"name": "holiday_days", "type": "integer", "nullable": false, "json_schema": {"type": "integer", "minimum": 0, "maximum": 366}},
+        {"name": "currency", "type": "text", "nullable": false, "max_length": 3, "json_schema": {"type": "string", "pattern": "^[A-Z]{3}$"}},
+        {"name": "source_note", "type": "text", "nullable": false, "max_length": 1000}
+      ]
+    },
+    {"op": "create_index", "table": "rate_tables", "name": "rate_tables_effective_from", "columns": ["effective_from"], "unique": true},
+    {
+      "op": "create_table",
+      "table": "salaries",
+      "columns": [
+        {"name": "employee_id", "type": "text", "nullable": false, "max_length": 128, "json_schema": {"type": "string", "pattern": "^[A-Za-z0-9_-]{1,128}$"}},
+        {"name": "effective_from", "type": "text", "nullable": false, "max_length": 10, "json_schema": {"type": "string", "pattern": "^[0-9-]{10}$"}},
+        {"name": "seq", "type": "integer", "nullable": false, "json_schema": {"type": "integer", "minimum": 1, "maximum": 1000}},
+        {"name": "monthly_minor", "type": "integer", "nullable": false, "json_schema": {"type": "integer", "minimum": 1, "maximum": 99999999999}},
+        {"name": "currency", "type": "text", "nullable": false, "max_length": 3, "json_schema": {"type": "string", "pattern": "^[A-Z]{3}$"}},
+        {"name": "mpf_exempt", "type": "boolean", "nullable": false, "default": false},
+        {"name": "note", "type": "text", "nullable": true, "max_length": 500}
+      ]
+    },
+    {"op": "create_index", "table": "salaries", "name": "salaries_key", "columns": ["employee_id", "effective_from", "seq"], "unique": true},
+    {
+      "op": "create_table",
+      "table": "payroll_runs",
+      "columns": [
+        {"name": "run_ref", "type": "text", "nullable": false, "max_length": 40, "json_schema": {"type": "string", "pattern": "^[A-Za-z0-9_-]{1,40}$"}},
+        {"name": "period", "type": "text", "nullable": false, "max_length": 7, "json_schema": {"type": "string", "pattern": "^[0-9-]{7}$"}},
+        {"name": "run_no", "type": "integer", "nullable": false, "json_schema": {"type": "integer", "minimum": 1, "maximum": 999}},
+        {"name": "entry_date", "type": "text", "nullable": false, "max_length": 10, "json_schema": {"type": "string", "pattern": "^[0-9-]{10}$"}},
+        {"name": "status", "type": "text", "nullable": false, "default": "draft", "max_length": 32, "json_schema": {"type": "string", "pattern": "^[a-z0-9_]{1,32}$"}},
+        {"name": "line_count", "type": "integer", "nullable": false, "json_schema": {"type": "integer", "minimum": 1, "maximum": 199}},
+        {"name": "calc_version", "type": "text", "nullable": false, "max_length": 32},
+        {"name": "decided_on", "type": "text", "nullable": true, "max_length": 10, "json_schema": {"type": "string", "pattern": "^[0-9-]{10}$"}},
+        {"name": "decision_note", "type": "text", "nullable": true, "max_length": 500}
+      ]
+    },
+    {"op": "create_index", "table": "payroll_runs", "name": "payroll_runs_ref", "columns": ["run_ref"], "unique": true},
+    {"op": "create_index", "table": "payroll_runs", "name": "payroll_runs_period", "columns": ["period", "run_no"], "unique": true},
+    {
+      "op": "create_table",
+      "table": "payroll_lines",
+      "columns": [
+        {"name": "run_ref", "type": "text", "nullable": false, "max_length": 40, "json_schema": {"type": "string", "pattern": "^[A-Za-z0-9_-]{1,40}$"}},
+        {"name": "employee_id", "type": "text", "nullable": false, "max_length": 128, "json_schema": {"type": "string", "pattern": "^[A-Za-z0-9_-]{1,128}$"}},
+        {"name": "employee_name", "type": "text", "nullable": false, "max_length": 120},
+        {"name": "join_date", "type": "text", "nullable": false, "max_length": 10, "json_schema": {"type": "string", "pattern": "^[0-9-]{10}$"}},
+        {"name": "salary_id", "type": "text", "nullable": false, "max_length": 128, "json_schema": {"type": "string", "pattern": "^[A-Za-z0-9_-]{1,128}$"}},
+        {"name": "monthly_minor", "type": "integer", "nullable": false, "json_schema": {"type": "integer", "minimum": 1, "maximum": 99999999999}},
+        {"name": "additions_minor", "type": "integer", "nullable": false, "json_schema": {"type": "integer", "minimum": 0, "maximum": 99999999999}},
+        {"name": "deductions_minor", "type": "integer", "nullable": false, "json_schema": {"type": "integer", "minimum": 0, "maximum": 99999999999}},
+        {"name": "mpf_exempt", "type": "boolean", "nullable": false},
+        {"name": "rate_effective_from", "type": "text", "nullable": false, "max_length": 10, "json_schema": {"type": "string", "pattern": "^[0-9-]{10}$"}},
+        {"name": "relevant_income_minor", "type": "integer", "nullable": false, "json_schema": {"type": "integer", "minimum": 0, "maximum": 99999999999}},
+        {"name": "employer_mpf_minor", "type": "integer", "nullable": false, "json_schema": {"type": "integer", "minimum": 0, "maximum": 99999999999}},
+        {"name": "employee_mpf_minor", "type": "integer", "nullable": false, "json_schema": {"type": "integer", "minimum": 0, "maximum": 99999999999}},
+        {"name": "net_pay_minor", "type": "integer", "nullable": false, "json_schema": {"type": "integer", "minimum": 0, "maximum": 99999999999}},
+        {"name": "currency", "type": "text", "nullable": false, "max_length": 3, "json_schema": {"type": "string", "pattern": "^[A-Z]{3}$"}},
+        {"name": "calc_version", "type": "text", "nullable": false, "max_length": 32}
+      ]
+    },
+    {"op": "create_index", "table": "payroll_lines", "name": "payroll_lines_key", "columns": ["run_ref", "employee_id"], "unique": true},
+    {
+      "op": "create_table",
+      "table": "postings",
+      "columns": [
+        {"name": "source", "type": "text", "nullable": false, "max_length": 16, "json_schema": {"type": "string", "pattern": "^[a-z_]{1,16}$"}},
+        {"name": "source_id", "type": "text", "nullable": false, "max_length": 128, "json_schema": {"type": "string", "pattern": "^[A-Za-z0-9_-]{1,128}$"}},
+        {"name": "entry_ref", "type": "text", "nullable": false, "max_length": 160, "json_schema": {"type": "string", "pattern": "^[A-Za-z0-9_-]{1,160}$"}},
+        {"name": "entry_date", "type": "text", "nullable": false, "max_length": 10, "json_schema": {"type": "string", "pattern": "^[0-9-]{10}$"}},
+        {"name": "period", "type": "text", "nullable": false, "max_length": 7, "json_schema": {"type": "string", "pattern": "^[0-9-]{7}$"}},
+        {"name": "batch", "type": "json", "nullable": false, "json_schema": {"type": "object", "properties": {"items": {"type": "array", "minItems": 3, "maxItems": 200}}, "required": ["items"]}},
+        {"name": "stage", "type": "text", "nullable": false, "default": "prepared", "max_length": 16, "json_schema": {"type": "string", "pattern": "^[a-z_]{1,16}$"}},
+        {"name": "posting_ref", "type": "text", "nullable": true, "max_length": 160, "json_schema": {"type": "string", "pattern": "^[A-Za-z0-9_-]{1,160}$"}},
+        {"name": "posted_on", "type": "text", "nullable": true, "max_length": 10, "json_schema": {"type": "string", "pattern": "^[0-9-]{10}$"}},
+        {"name": "calc_version", "type": "text", "nullable": false, "max_length": 32}
+      ]
+    },
+    {"op": "create_index", "table": "postings", "name": "postings_source", "columns": ["source", "source_id"], "unique": true},
+    {"op": "create_index", "table": "postings", "name": "postings_entry_ref", "columns": ["entry_ref"], "unique": true}
+  ]
+}
