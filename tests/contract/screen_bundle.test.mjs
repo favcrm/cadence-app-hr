@@ -21,6 +21,8 @@ const INERT_URLS = new Set([
   "http://www.w3.org/XML/1998/namespace",
   "https://react.dev/errors/",
   "https://tailwindcss.com",
+  // Text in the first MPF rate row's source note, written to storage as data and shown as text; never fetched.
+  "https://www.mpfa.org.hk/en/mpf-system/mandatory-contributions/employees",
 ]);
 
 test("the declaration names exactly the files on disk and no remote image", () => {

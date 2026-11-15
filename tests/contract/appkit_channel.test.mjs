@@ -293,7 +293,7 @@ test("a push for another app, or with an unknown locale or a malformed route, is
 
 test("a section or action this screen does not know is not a refusal: the section reads as People, the action is dropped", async () => {
   const { channel } = await mount({
-    route: { section: "payroll", view: "list", record_id: null, segment_id: null },
+    route: { section: "attendance", view: "list", record_id: null, segment_id: null },
     actions: ["records.list", "records.show", "records.create", "records.update", "records.delete", "screen.route.patch"],
   });
   try {

@@ -9,11 +9,11 @@ const app = fileURLToPath(new URL("../../app/", import.meta.url));
 const files = {};
 const walk = (dir) => { for (const n of readdirSync(dir)) { const p = `${dir}/${n}`; if (statSync(p).isDirectory()) walk(p); else files[p.slice(app.length)] = readFileSync(p, "utf8"); } };
 walk(app + "skills");
-const TAGS = ["claim-intake", "hr-policy-answers", "job-description", "leave-desk", "recruit-screening"];
+const TAGS = ["claim-intake", "hr-policy-answers", "hr-posting", "job-description", "leave-desk", "payroll-prep", "recruit-screening"];
 const body = (tag) => Object.entries(files).filter(([p]) => p.startsWith(`skills/${tag}/`)).map(([, t]) => t).join("\n");
 const clone = () => ({ ...files });
 
-test("the app ships exactly the five planned skills and each passes the reader rules under 32 KiB", () => {
+test("the app ships exactly the seven planned skills and each passes the reader rules under 32 KiB", () => {
   const present = [...new Set(Object.keys(files).map((p) => p.split("/")[1]))].sort();
   expect(present).toEqual(TAGS);
   for (const tag of TAGS) {
@@ -89,4 +89,36 @@ test("leave-desk is true about a staged approval: the host does not refuse it, a
   expect(text).toMatch(/balance stays unchanged until the owner runs Leave → Balances → "Record earlier approvals"/);
   expect(text).toMatch(/never stage a `records\.update` that changes a leave request's `status`/);
   expect(text).toMatch(/send them to the request on the Leave tab/);
+});
+
+test("hr-posting: Accounting absent means posting is unavailable, and an exact lookup decides before and after", () => {
+  const text = body("hr-posting");
+  // Absent: app_describe on accounting first, and the refusal ends the procedure with the unavailable message.
+  expect(text).toMatch(/Call `app_describe` with `app: "accounting"`/);
+  expect(text).toMatch(/`refused: "app_unavailable"`/);
+  expect(text).toMatch(/Posting to Accounting is unavailable/);
+  expect(text.indexOf("app_describe")).toBeLessThan(text.indexOf("records.batch"));
+  // Accounting's contract: the references, the eq lookup, the chart read with in, and the opening balances.
+  expect(text).toMatch(/hr-payroll-<YYYY-MM>-<run number>/);
+  expect(text).toMatch(/hr-claim-<claim record id>/);
+  expect(text).toMatch(/"table": "journal_entries"|`table: "journal_entries"`/);
+  expect(text).toMatch(/"op": "eq", "value": "<reference>"/);
+  expect(text).toMatch(/"op": "in"/);
+  expect(text).toMatch(/on or before its standing opening balances/);
+  // It copies the screen's batch and records posting_ref only after the journal shows the entry.
+  expect(text).toMatch(/exactly the posting's `batch` value/);
+  expect(text).toMatch(/Only if the entry is there, stage one HR update/);
+  expect(text).toMatch(/"posting_ref": "<reference>"/);
+  expect(text).toMatch(/Never post the same reference twice/);
+  expect(text).toMatch(/never invent an account/);
+});
+
+test("payroll-prep explains and never computes or writes payroll", () => {
+  const text = body("payroll-prep");
+  expect(text).toMatch(/never compute or estimate pay, an MPF contribution, a total or a difference/);
+  expect(text).toMatch(/Never stage a create or an update on `payroll_runs`, `payroll_lines`, `salaries`, `rate_tables` or `postings`/);
+  expect(text).toMatch(/An approved run cannot be changed/);
+  expect(text).toMatch(/`hr-posting`/);
+  // No rate figure in the skill: rates are the stored row's.
+  expect(text).not.toMatch(/7,100|30,000|1,500/);
 });

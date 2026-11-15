@@ -165,3 +165,17 @@ test("a postings row is the prepared proposal with the exact batch, in the posti
   expect(row).toMatchObject({ source: "payroll", source_id: "hr-payroll-2026-01-1", entry_ref: "hr-payroll-2026-01-1", stage: "prepared", posting_ref: null, posted_on: null });
   expect(row.batch).toEqual(accountingBatch(proposal));
 });
+
+test("every payroll and posting message the screen shows has a zh-HK entry", async () => {
+  const { zhHK } = await import("../../src/features/hr/localeCatalog.ts");
+  const { SKIP_TEXT } = await import("../../src/domain/payroll.ts");
+  const read = (p: string) => readFileSync(fileURLToPath(new URL(`../../${p}`, import.meta.url)), "utf8");
+  const found = new Set<string>(Object.values(SKIP_TEXT));
+  for (const m of read("src/domain/posting.ts").matchAll(/PostingError\("([^"]+)"\)/g)) found.add(m[1]!);
+  for (const m of read("src/domain/payroll.ts").matchAll(/return "([^"]* [^"]*)";/g)) found.add(m[1]!);
+  for (const m of read("src/features/hr/PayrollPanes.tsx").matchAll(/hostErrorText\([^,]+, "([^"]+)"\)/g)) found.add(m[1]!);
+  for (const m of read("src/features/hr/PayrollPanes.tsx").matchAll(/(?:salaries|mpfExpense|netPay|mpfPayable|expense|payable): "([^"]+)"/g)) found.add(m[1]!);
+  for (const s of ["Payroll", "Payroll runs", "Salaries", "MPF rates", "Postings", "Prepared", "Posted", "Draft", "Approved", "Cancelled"]) found.add(s);
+  expect(found.size).toBeGreaterThan(20);
+  expect([...found].filter((s) => !(s in zhHK))).toEqual([]);
+});

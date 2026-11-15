@@ -19,7 +19,7 @@ const SEARCH: Record<string, string[]> = {
   claims: ["employee_name", "merchant", "description"], job_openings: ["title"], candidates: ["display_name", "email", "cv_text"], leave_entries: ["source_ref", "note"],
 };
 const OPEN: Record<string, string> = { leave_requests: "pending", claims: "submitted" };
-const SECTIONS = ["people", "policies", "leave", "claims", "recruiting"];
+const SECTIONS = ["people", "policies", "leave", "claims", "payroll", "recruiting"];
 const ACTIONS = ["records.list", "records.show", "records.create", "records.update", "records.batch", "records.aggregate", "screen.route.patch"];
 const INSTALL = "install-preview";
 const DIGEST = `sha256:${"c".repeat(64)}`;

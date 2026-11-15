@@ -229,6 +229,15 @@ test("the manifest names app hr at the package version and requires the four con
   expect(manifest.listing.data.personal).toBe(true);
   expect(manifest.listing.can.join(" ")).toContain("welcome note");
   expect(manifest.listing.tagline.length).toBeLessThanOrEqual(80);
+  // The host's listing limits: a longer listing is refused at check time.
+  expect(manifest.listing.about.length).toBeLessThanOrEqual(600);
+  expect(manifest.listing.tags.length).toBeLessThanOrEqual(5);
+  expect(manifest.listing.can.length).toBeLessThanOrEqual(5);
+  for (const line of manifest.listing.can) expect(line.length).toBeLessThanOrEqual(100);
+  expect(manifest.listing.data.stores.length).toBeLessThanOrEqual(5);
+  for (const line of manifest.listing.data.stores) { expect(line.length).toBeLessThanOrEqual(120); expect(line).not.toContain(": "); }
+  expect(manifest.summary.length).toBeLessThanOrEqual(160);
+  for (const context of json("app/app-chat.json").contexts) expect(context.prompts.length).toBeLessThanOrEqual(3);
   expect(["marketing", "customers", "operations", "finance", "content", "other"]).toContain(manifest.listing.category);
   expect(descriptor.app).toBe(manifest.app);
   expect(json("app/app-chat.json").app).toBe("hr");

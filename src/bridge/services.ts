@@ -3,7 +3,7 @@ import { channel } from "./channel";
 import { assertCurrentScope, requireOperation, type DisplayScope } from "./scope";
 
 type Bag = Record<string, unknown>;
-export const SECTIONS = ["people", "policies", "leave", "claims", "recruiting"] as const;
+export const SECTIONS = ["people", "policies", "leave", "claims", "payroll", "recruiting"] as const;
 export type Section = (typeof SECTIONS)[number];
 export interface RecordFilter { field: string; op: "eq" | "in" | "prefix" | "contains" | "gte" | "lte"; value: string | number | boolean | (string | number | boolean)[] }
 export interface CallArgs {

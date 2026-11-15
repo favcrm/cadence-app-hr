@@ -84,3 +84,4 @@
 .hr-tier .field { width: 5rem; }
 .hr .num[data-negative="true"] { color: var(--color-warn); }
 .hr .num[data-negative="true"]::before { content: "\26A0\00a0"; }
+.hr .hr-amount { width: 7.5rem; min-width: 6rem; }
