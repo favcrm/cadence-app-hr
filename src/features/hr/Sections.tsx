@@ -1,4 +1,4 @@
-import { Button, Notice, Select } from "@cadence/screen-ui";
+import { Notice, Select } from "@cadence/screen-ui";
 import { useMemo, useState } from "react";
 import BalancesPane, { type LedgerCaps } from "./BalancesPane";
 import { parseRecordList, type HostScope } from "./hostActions";
@@ -16,24 +16,27 @@ const OPENING_TITLES = listArgs(openingsView, { status: "all", query: "", limit:
 
 export interface PaneProps { scope: HostScope; canWrite: boolean; recordId: string | null; onSelect: (id: string) => void; onClose: () => void; caps: LedgerCaps }
 
-/** Two lists under one tab. The choice is local; a different list closes any open drawer. */
+/** Sub-views under one section. The choice is local; a different list closes any open drawer. */
 function SubTabs({ labels, current, onChange, onClose }: { labels: readonly string[]; current: number; onChange: (i: number) => void; onClose: () => void }) {
   const { t } = useLocale();
   return (
-    <div className="hr-actions hr-subtabs" role="group" aria-label={t("Lists")}>
+    <div className="app-outlet-tabs hr-subtabs" role="group" aria-label={t("Lists")}>
       {labels.map((label, i) => (
-        <Button key={label} size="sm" aria-pressed={current === i} variant={current === i ? "primary" : "secondary"} onClick={() => { if (current !== i) { onClose(); onChange(i); } }}>{t(label)}</Button>
+        <button key={label} type="button" className="app-outlet-tab" data-on={current === i ? "" : undefined} aria-pressed={current === i}
+          onClick={() => { if (current !== i) { onClose(); onChange(i); } }}>{t(label)}</button>
       ))}
     </div>
   );
 }
 
-export const PoliciesTab = (p: PaneProps) => <RecordsPane {...p} view={policiesView} />;
+export const PoliciesTab = (p: PaneProps) => <RecordsPane {...p} view={policiesView} heading="Policies" />;
 /** Claims the owner entered, and claims staff filed from their own view (0.5.0). */
 export function ClaimsTab(p: PaneProps) {
+  const { t } = useLocale();
   const [list, setList] = useState(0);
   return (
     <div className="hr-list">
+      <h3 className="text-cardtitle font-medium text-ink-100" data-outlet-heading>{t("Claims")}</h3>
       <SubTabs labels={["Claims", "Staff claims"]} current={list} onChange={setList} onClose={p.onClose} />
       <RecordsPane key={list} {...p} view={list === 0 ? claimsView : staffClaimsView} />
     </div>
@@ -47,6 +50,7 @@ export function LeaveTab(p: PaneProps) {
   const [list, setList] = useState(0);
   return (
     <div className="hr-list">
+      <h3 className="text-cardtitle font-medium text-ink-100" data-outlet-heading>{t("Leave")}</h3>
       <SubTabs labels={["Leave requests", "Leave types", "Balances", "Staff requests"]} current={list} onChange={setList} onClose={p.onClose} />
       {list === 2
         ? (p.caps.aggregate ? <BalancesPane scope={p.scope} canWrite={p.canWrite} caps={p.caps} /> : <Notice>{t("This workspace does not offer balances to this screen. Ask the owner to update the app.")}</Notice>)
@@ -65,6 +69,7 @@ export function RecruitingTab(p: PaneProps) {
   const view = useMemo(() => candidatesView(opening === "all" ? null : opening, titles), [opening, titles]);
   return (
     <div className="hr-list">
+      <h3 className="text-cardtitle font-medium text-ink-100" data-outlet-heading>{t("Recruiting")}</h3>
       <SubTabs labels={["Openings", "Candidates"]} current={list} onChange={setList} onClose={p.onClose} />
       {list === 0 ? <RecordsPane key="openings" {...p} view={openingsView} /> : (
         <>
@@ -83,9 +88,11 @@ export function RecruitingTab(p: PaneProps) {
 
 /** Payroll: runs computed in the screen, the salaries and MPF rate rows they read, and postings to Accounting. */
 export function PayrollTab(p: PaneProps) {
+  const { t } = useLocale();
   const [list, setList] = useState(0);
   return (
     <div className="hr-list">
+      <h3 className="text-cardtitle font-medium text-ink-100" data-outlet-heading>{t("Payroll")}</h3>
       <SubTabs labels={["Payroll runs", "Salaries", "MPF rates", "Postings"]} current={list} onChange={setList} onClose={p.onClose} />
       {list === 0 ? <RunsPane scope={p.scope} canWrite={p.canWrite} canBatch={p.caps.batch} />
         : list === 1 ? <SalariesPane scope={p.scope} canWrite={p.canWrite} />

@@ -1,7 +1,7 @@
 ---
 app: hr
 title: HR
-version: '0.5.1'
+version: '0.5.2'
 summary: People, policies, leave, claims, MPF payroll, attendance and recruiting, with a staff view for leave, claims and clock-in, and an agent that stages changes.
 needs:
   connections: []

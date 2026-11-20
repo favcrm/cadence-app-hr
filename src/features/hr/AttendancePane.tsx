@@ -18,9 +18,10 @@ export default function AttendancePane({ scope, canWrite, canBatch }: { scope: H
   const [list, setList] = useState(0);
   return (
     <div className="hr-list">
-      <div className="hr-actions hr-subtabs" role="group" aria-label={t("Lists")}>
+      <h3 className="text-cardtitle font-medium text-ink-100" data-outlet-heading>{t("Attendance")}</h3>
+      <div className="app-outlet-tabs hr-subtabs" role="group" aria-label={t("Lists")}>
         {["Punches", "Import from a device", "Add a correction"].map((label, i) => (
-          <Button key={label} size="sm" aria-pressed={list === i} variant={list === i ? "primary" : "secondary"} onClick={() => setList(i)}>{t(label)}</Button>
+          <button key={label} type="button" className="app-outlet-tab" data-on={list === i ? "" : undefined} aria-pressed={list === i} onClick={() => setList(i)}>{t(label)}</button>
         ))}
       </div>
       {list === 0 ? <Punches scope={scope} /> : list === 1 ? <Import scope={scope} canWrite={canWrite} canBatch={canBatch} /> : <Correction scope={scope} canWrite={canWrite} />}

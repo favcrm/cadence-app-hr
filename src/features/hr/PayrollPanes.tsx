@@ -152,9 +152,9 @@ export function SalariesPane({ scope, canWrite }: { scope: HostScope; canWrite: 
   const nameOf = (id: string) => names.data?.[id] ?? id;
   const rows = (salaries.data ?? []).map((r) => ({ r, x: toSalary(r) })).sort((a, b) => nameOf(a.x?.employeeId ?? "").localeCompare(nameOf(b.x?.employeeId ?? "")) || (b.x?.effectiveFrom ?? "").localeCompare(a.x?.effectiveFrom ?? "") || (b.x?.seq ?? 0) - (a.x?.seq ?? 0));
   return (
-    <section aria-label={t("Salaries")} className="hr-list">
+    <section aria-label={t("Salaries")} className="hr-list hr-list-controls">
       {saved && <Notice className="mb-2" state="saved">{t("The salary was added.")}</Notice>}
-      {canWrite && <div className="hr-actions"><Button variant="primary" onClick={() => { setSaved(false); setAdding(true); }}>{t("Add salary")}</Button></div>}
+      {canWrite && <div className="hr-toolbar hr-list-toolbar"><Button variant="primary" className="hr-list-create" onClick={() => { setSaved(false); setAdding(true); }}>{t("Add salary")}</Button></div>}
       {salaries.loading && <Loading>{t("Reading the salaries…")}</Loading>}
       {salaries.error !== null && !salaries.loading && <ErrorNotice onRetry={() => void salaries.store.refresh()}>{t(hostErrorText(salaries.failure, "The salaries could not be read."))}</ErrorNotice>}
       {salaries.data && rows.length === 0 && <EmptyState name="salaries" title={t("No salaries yet")}>{t(canWrite ? "Add a monthly salary for each employee before the first payroll run." : "Nothing has been recorded yet.")}</EmptyState>}
@@ -339,10 +339,10 @@ export function RunsPane({ scope, canWrite, canBatch }: { scope: HostScope; canW
   const open = view.s === "run" ? rows.find((r) => r.id === view.id) : undefined;
   if (open) return <RunDetail key={`${open.id}:${open.revision}`} scope={scope} run={open} canWrite={canWrite} onBack={() => setView({ s: "list" })} onChanged={refresh} />;
   return (
-    <section aria-label={t("Payroll runs")} className="hr-list">
+    <section aria-label={t("Payroll runs")} className="hr-list hr-list-controls">
       {saved && <Notice className="mb-2" state="saved">{t("The run was saved as a draft. Open it to approve it.")}</Notice>}
       {canWrite && (canBatch
-        ? <div className="hr-actions"><Button variant="primary" onClick={() => { setSaved(false); setView({ s: "new" }); }}>{t("New payroll run")}</Button></div>
+        ? <div className="hr-toolbar hr-list-toolbar"><Button variant="primary" className="hr-list-create" onClick={() => { setSaved(false); setView({ s: "new" }); }}>{t("New payroll run")}</Button></div>
         : <Notice>{t("This workspace does not offer batch saves to this screen, so a payroll run cannot be saved here.")}</Notice>)}
       {runs.loading && <Loading>{t("Reading the payroll runs…")}</Loading>}
       {runs.error !== null && !runs.loading && <ErrorNotice onRetry={refresh}>{t(hostErrorText(runs.failure, "The payroll runs could not be read."))}</ErrorNotice>}

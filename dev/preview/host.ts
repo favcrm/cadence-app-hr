@@ -36,7 +36,8 @@ const locale = LOCALES.includes(query.get("locale") as (typeof LOCALES)[number])
 const frame = document.querySelector<HTMLIFrameElement>("#hr-frame")!;
 const status = document.querySelector<HTMLElement>("#status")!;
 
-for (const [id, values, current, key] of [["scenarios", SCENARIOS, scenario, "scenario"], ["locales", LOCALES, locale, "locale"], ["viewers", VIEWERS, viewer, "viewer"]] as const) {
+const currentSection = SECTIONS.includes(query.get("section") ?? "") ? (query.get("section") as string) : "people";
+for (const [id, values, current, key] of [["sections", SECTIONS, currentSection, "section"], ["scenarios", SCENARIOS, scenario, "scenario"], ["locales", LOCALES, locale, "locale"], ["viewers", VIEWERS, viewer, "viewer"]] as const) {
   const nav = document.getElementById(id)!;
   for (const value of values) {
     const url = new URL(location.href);
