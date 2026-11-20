@@ -197,7 +197,9 @@ test("acceptance 2: the member view is its own screen and offers no owner tab", 
   // The owner screen is never mounted for a member: the probe answers first, and a member gets the staff screen.
   const shell = src("src/features/hr/HrScreen.tsx");
   expect(shell.indexOf('if (who.viewer === "member") return <StaffScreen')).toBeGreaterThan(0);
-  expect(shell.indexOf('if (who.viewer === "member")')).toBeLessThan(shell.indexOf("SECTIONS.map"));
+  for (const ownerView of ["<PoliciesTab", "<LeaveTab", "<ClaimsTab", "<PayrollTab", "<RecruitingTab", "<AttendanceTab", "<StaffAccountsTab", "<PeopleList"]) {
+    expect(shell.indexOf('if (who.viewer === "member")')).toBeLessThan(shell.indexOf(ownerView));
+  }
   expect(shell.indexOf("if (who.viewer === null)")).toBeLessThan(shell.indexOf('if (who.viewer === "member")'));
 });
 

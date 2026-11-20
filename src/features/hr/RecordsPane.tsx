@@ -66,8 +66,8 @@ const DECISION_TEXT: Record<Decision, { title: string; body: string; confirm: st
     body: "The owner's decision is final: a decided record cannot be changed. You may leave a short note for the record." },
 };
 
-export default function RecordsPane({ scope, canWrite, view, recordId, onSelect, onClose, caps }: {
-  scope: HostScope; canWrite: boolean; view: View; recordId: string | null; onSelect: (id: string) => void; onClose: () => void; caps?: LedgerCaps;
+export default function RecordsPane({ scope, canWrite, view, recordId, onSelect, onClose, caps, heading }: {
+  scope: HostScope; canWrite: boolean; view: View; recordId: string | null; onSelect: (id: string) => void; onClose: () => void; caps?: LedgerCaps; heading?: string;
 }) {
   const { t, formatNumber, locale } = useLocale();
   const [creating, setCreating] = useState(false);
@@ -120,6 +120,7 @@ export default function RecordsPane({ scope, canWrite, view, recordId, onSelect,
   }
   return (
     <section aria-label={t(view.title)} className="hr-list hr-list-controls">
+      {heading && <h3 className="text-cardtitle font-medium text-ink-100" data-outlet-heading>{t(heading)}</h3>}
       <div className="hr-toolbar hr-list-toolbar">
         <div className="hr-search">
           <label className="sr-only" htmlFor={`hr-${view.id}-search`}>{t(view.searchHint)}</label>

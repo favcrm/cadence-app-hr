@@ -1,8 +1,7 @@
-import { Button, ErrorNotice, Loading, Notice } from "@cadence/screen-ui";
+import { ErrorNotice, Loading, Notice } from "@cadence/screen-ui";
 import { useEffect, useRef, useState } from "react";
 import { patchRoute } from "../../bridge/route";
 import { scopeError, useScope } from "../../bridge/scope";
-import { SECTIONS, type Section } from "../../bridge/services";
 import EmployeeDrawer from "./EmployeeDrawer";
 import EmployeeNew from "./EmployeeNew";
 import "./hr-layout.css";
@@ -17,7 +16,6 @@ import type { HostScope } from "./hostActions";
 // Waiting longer than this for the first verified host push means the host is
 // unreachable; the screen says so instead of spinning forever.
 const HOST_PUSH_TIMEOUT_MS = 15000;
-const TAB_LABEL: Record<Section, string> = { people: "People", policies: "Policies", leave: "Leave", claims: "Claims", payroll: "Payroll", recruiting: "Recruiting", attendance: "Attendance" };
 
 type ViewerState = { key: string; viewer: Viewer | null; failure: unknown };
 /**
@@ -60,8 +58,8 @@ function Body() {
   const [peopleList, setPeopleList] = useState(0);
   const who = useViewer(snapshot?.scope ?? null, snapshot?.actions.includes("records.update") === true);
   const sectionNow = snapshot?.route.section ?? "people";
-  // People's sub-view (Directory or Staff accounts) starts at Directory whenever the section changes.
-  useEffect(() => { setPeopleList(0); }, [sectionNow]);
+  // People's sub-view (Directory or Staff accounts) and transient notices reset whenever the section changes.
+  useEffect(() => { setPeopleList(0); setSavedNotice(false); }, [sectionNow]);
   useEffect(() => { setDismissed(null); }, [detail]);
   useEffect(() => {
     if (snapshot) return;
@@ -95,11 +93,6 @@ function Body() {
   const pane = { scope, canWrite, caps, recordId, onSelect: (id: string) => { setDismissed(null); go({ view: "list", record_id: id }); }, onClose: () => { setDismissed(detail); go({ view: "list", record_id: null }); } };
   return (
     <main className="app-outlet hr" key={`${scope.installId}:${snapshot.digest}`}>
-      <nav className="hr-tabs hr-actions" aria-label={t("HR sections")}>
-        {SECTIONS.map((id) => (
-          <Button key={id} size="sm" variant={id === section ? "primary" : "secondary"} aria-pressed={id === section} onClick={() => { if (id !== section) { setSavedNotice(false); go({ section: id, view: "list", record_id: null }); } }}>{t(TAB_LABEL[id])}</Button>
-        ))}
-      </nav>
       <div className="hr-surface">
         {savedNotice && <Notice className="mb-2" state="saved">{t("The employee was saved, but this screen could not move on. Reload the page to see the list.")}</Notice>}
         {!canList ? <Notice>{t("This workspace does not offer the people directory to this session.")}</Notice>
