@@ -33,9 +33,9 @@ unambiguous JSON containing exactly the inspected files and bytes; duplicate
 keys, ignored fields and substitutions refuse. No credential value or raw
 scanner diagnostic is printed.
 
-The CI app check (`Check bundle against the current host grammar`) is pinned to the pre-release v0.3.23-beta.1 with its
-archive checksum, because 0.3.0's screen declares `records.batch` and `records.aggregate`, which the released v0.3.22
-refuses. `assert-app-check.py` still accepts only the hosted-only `app-storage` refusal.
+The CI app check (`Check bundle against the current host grammar`) is pinned to the released v0.5.2 with its archive
+checksum, the same version publish targets. The checker must know `records.batch` and `records.aggregate`, which
+0.3.0's screen declares (first in v0.3.23-beta.1; the released v0.3.22 refuses them). `assert-app-check.py` still accepts only the hosted-only `app-storage` refusal.
 
 Publication still requires an exact released checker containing grammar v2,
 selected through `cadence_version` or `CADENCE_TARGET_VERSION`. The separate
