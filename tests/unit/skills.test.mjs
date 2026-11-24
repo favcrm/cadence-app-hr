@@ -7,7 +7,7 @@ import { skillPackage } from "../support/skill-package.mjs";
 
 const app = fileURLToPath(new URL("../../app/", import.meta.url));
 const files = {};
-const walk = (dir) => { for (const n of readdirSync(dir)) { const p = `${dir}/${n}`; if (statSync(p).isDirectory()) walk(p); else files[p.slice(app.length)] = readFileSync(p, "utf8"); } };
+const walk = (dir) => { for (const n of readdirSync(dir).sort()) { const p = `${dir}/${n}`; if (statSync(p).isDirectory()) walk(p); else files[p.slice(app.length)] = readFileSync(p, "utf8"); } };
 walk(app + "skills");
 const TAGS = ["attendance-review", "claim-intake", "hr-policy-answers", "hr-posting", "job-description", "leave-desk", "payroll-prep", "recruit-screening"];
 const body = (tag) => Object.entries(files).filter(([p]) => p.startsWith(`skills/${tag}/`)).map(([, t]) => t).join("\n");
